@@ -186,6 +186,19 @@ evals demonstrating that its own gate works.
 
 ## License
 
-Apache 2.0 is the intended license (permissive, with an explicit patent grant —
-the norm for dev tooling that companies run in CI). The `LICENSE` file has not
-been added yet.
+[FSL-1.1-ALv2](LICENSE.md) — the Functional Source License, converting to
+**Apache 2.0 two years after each version is published**. That conversion is an
+irrevocable grant written into the license itself, not a promise.
+
+In the meantime you may read, run, modify, and redistribute Assay for any
+purpose except building a commercial product or service that competes with it.
+Explicitly permitted: internal use, non-commercial research and education, and
+professional services. Running Assay in your own CI to measure your own
+reviewers is internal use and is fine.
+
+This is deliberate rather than a placeholder. A benchmark nobody can legally run
+is not reproducible in any sense that matters, so the license has to permit
+real use; the competing-use carve-out and the two-year clock keep a possible
+product path open without pretending the code is more open than it is. Assay is
+therefore *source-available*, not open source — the README avoids calling it
+"open" for that reason.

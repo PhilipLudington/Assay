@@ -143,8 +143,10 @@ Deliberately unfiltered. Some of these contradict each other.
 
 - **Prior art.** Multiple commercial AI code-review products exist, and there
   are academic bug-injection benchmarks. Need an honest survey before claiming
-  novelty — the defensible claim is probably "open, reproducible, per-reviewer
-  measurement," not "first to review code with agents."
+  novelty — the defensible claim is probably "published, reproducible,
+  per-reviewer measurement," not "first to review code with agents." (Originally
+  written as "open"; corrected 2026-07-24 once the license landed on
+  source-available. The claim must not outrun the license.)
 
 ## Open Questions
 
@@ -172,7 +174,11 @@ Deliberately unfiltered. Some of these contradict each other.
 - [ ] Is SARIF output in scope for v1, or the first thing after?
 - [ ] What is the minimum publishable result — how many reviewers and how many
       fixtures before a results table is worth putting in a README?
-- [ ] License. Permissive to maximize adoption, or copyleft?
+- [x] ~~License. Permissive to maximize adoption, or copyleft?~~ **Resolved
+      2026-07-24: neither — FSL-1.1-ALv2, source-available, converting to
+      Apache 2.0 after two years.** The framing was wrong: the real tension was
+      adoption versus keeping a product path open, not permissive versus
+      copyleft. See DESIGN.md Key Decisions.
 
 ## Not Now (Parking Lot)
 

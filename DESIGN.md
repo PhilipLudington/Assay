@@ -438,11 +438,27 @@ assay/
   redirect and every external link already shared. Settling it at the first
   moment the cost was still near zero was the point.
 
-- **Decision:** Apache 2.0.
-  **Alternatives considered:** MIT; a copyleft license.
-  **Rationale:** Permissive maximizes adoption, which a benchmark needs to
-  matter at all. Apache over MIT for the explicit patent grant, which is the
-  norm for dev tooling companies expect to run in CI.
+- **Decision:** FSL-1.1-ALv2 (Functional Source License), converting to Apache
+  2.0 two years after each version is published. Supersedes an earlier decision
+  for plain Apache 2.0, revised 2026-07-24.
+  **Alternatives considered:** Apache 2.0 or MIT outright; all rights reserved
+  (no license); BUSL-1.1; PolyForm Noncommercial; a copyleft license.
+  **Rationale:** Two requirements pull against each other — the benchmark must
+  be legally runnable by others or "reproducible" is a word rather than a
+  property, and the possibility of this becoming a product should not be spent
+  before any code exists. Licenses are one-way: a permissive grant cannot be
+  withdrawn from versions already published, so granting one on day zero spends
+  an option for nothing. All rights reserved preserves the option but blocks
+  adoption entirely — corporate legal will not clear unlicensed code for CI,
+  which would defeat the SARIF input path whose whole purpose is letting others
+  measure their own reviewers. BUSL-1.1 and PolyForm Noncommercial were rejected
+  for the same reason in subtler form: BUSL bars *production* use by default and
+  PolyForm bars commercial use, either of which stops a company running Assay in
+  its own CI. FSL draws the line at *competing* use instead, which is the line
+  actually worth defending, and its two-year conversion is an irrevocable grant
+  in the license text rather than a stated intention. Cost: Assay is
+  source-available, not open source, and the README says so rather than claiming
+  "open."
 
 ## Tradeoffs & Risks
 

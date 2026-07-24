@@ -148,7 +148,8 @@ Deliberately unfiltered. Some of these contradict each other.
 
 ## Open Questions
 
-- [ ] Is the name **Assay** right, or does this want something else?
+- [x] ~~Is the name **Assay** right, or does this want something else?~~
+      **Resolved 2026-07-24: keeping Assay.** See DESIGN.md Key Decisions.
 - [ ] Panel-first, eval-first, or explicitly two coupled deliverables?
 - [ ] What is the target language for the fixture corpus, and does that differ
       from the language the harness itself is written in?

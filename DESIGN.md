@@ -427,6 +427,17 @@ assay/
   codebase that assumed one is precisely the kind of rework this project should
   not be caught modeling.
 
+- **Decision:** The name is **Assay**, settled 2026-07-24.
+  **Alternatives considered:** Leaving it provisional; renaming to something
+  more literal about benchmarking or code review.
+  **Rationale:** An assay is a test of composition and purity that reports a
+  measured quantity rather than a verdict — which is exactly what this does, and
+  the metaphor holds without explanation. It is unclaimed in this space, short,
+  and pronounceable. The decision was also made cheap-now-expensive-later by
+  publication: the repository is public at that URL, so a rename costs a
+  redirect and every external link already shared. Settling it at the first
+  moment the cost was still near zero was the point.
+
 - **Decision:** Apache 2.0.
   **Alternatives considered:** MIT; a copyleft license.
   **Rationale:** Permissive maximizes adoption, which a benchmark needs to

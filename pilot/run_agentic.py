@@ -1,9 +1,16 @@
-#!/usr/bin/env -S uv run --script
-# /// script
-# requires-python = ">=3.11"
-# dependencies = ["claude-agent-sdk>=0.2.120"]
-# ///
 """Agentic reviewer: Agent SDK, floor context plus read-only repo navigation.
+
+**Run this with the project venv, not `uv run --script`:**
+
+    .venv/bin/python pilot/run_agentic.py --fixture medium --runs 2
+
+The standalone-script header is gone because this now imports the real
+answer-key boundary from `assay.executor`. That is the one place the pilot
+depends on production code, and it is deliberate: the Phase 1 gate forbids any
+measurement run while the boundary is unenforced, and the locality-verification
+run happens on this harness. Duplicating the boundary here would mean the
+control that is tested and the control that runs are different code.
+
 
 Answers Q2 (is Glob/Grep navigation non-trivial at this repo size?) and the
 agentic half of Q3 (caching) and Q4 (cost).
@@ -36,6 +43,7 @@ from claude_agent_sdk import (
     query,
 )
 
+from assay.executor.hooks import confinement_hooks
 from common import (
     DEFAULT_MODEL,
     FINDING_SCHEMA,
@@ -86,15 +94,22 @@ def parse_args() -> argparse.Namespace:
 
 async def one_run(fixture, reviewer: str, args) -> dict:
     """Runs the agentic reviewer once and returns a transcript record."""
+    # The answer-key boundary. `cwd` alone is not a control — the pilot's own
+    # transcripts show 22 attempts at absolute paths outside it, which failed
+    # only because those paths did not exist. This denies them for cause and
+    # records every attempt.
+    boundary, hooks = confinement_hooks(fixture.repo)
+
     options = ClaudeAgentOptions(
         model=args.model,
         effort=args.effort,
         cwd=str(fixture.repo),
         allowed_tools=READ_ONLY_TOOLS,
         disallowed_tools=DENIED_TOOLS,
-        # Read-only tool set plus a confined cwd; nothing here can mutate the
-        # fixture. Phase 1 replaces this with an enforced path boundary and a
-        # test — the pilot only needs the runs not to block on prompts.
+        hooks=hooks,
+        # Approval is not the control; the PreToolUse hook above is. Note that
+        # this mode is precisely why the boundary cannot be a `can_use_tool`
+        # callback — it would never be invoked. See `assay.executor.hooks`.
         permission_mode="bypassPermissions",
         # Do not inherit the operator's CLAUDE.md, settings or skills; they
         # would silently change what the reviewer is told.
@@ -155,6 +170,12 @@ async def one_run(fixture, reviewer: str, args) -> dict:
         "touched_files": fixture.touched_files(),
         "findings": findings,
         "parse_error": None if structured else "no structured_output on ResultMessage",
+        # Persisted, not just blocked: an attempted escape is evidence about
+        # the fixture even when the boundary holds.
+        "boundary_violations": [
+            {"tool": v.tool, "field": v.field, "value": v.value, "reason": v.reason}
+            for v in boundary.violations
+        ],
         "usage": {
             "input_tokens": sum(u.get("inputTokens", 0) for u in model_usage.values()),
             "output_tokens": sum(u.get("outputTokens", 0) for u in model_usage.values()),
@@ -246,11 +267,13 @@ async def main_async() -> int:
             by_tool: dict[str, int] = {}
             for call in record["tool_calls"]:
                 by_tool[call["name"]] = by_tool.get(call["name"], 0) + 1
+            blocked = len(record["boundary_violations"])
             print(
                 f"   run {run_index}: {len(record['findings']):2d} findings  "
                 f"tools={by_tool or '{}'}  turns={record['num_turns']}  "
                 f"cache_read={record['usage']['cache_read_input_tokens']:>7}  "
                 f"${record['cost_usd'] or 0:.4f}"
+                + (f"  ⚠ {blocked} blocked" if blocked else "")
             )
 
     print(f"total spend this invocation: ${total_cost:.4f}")

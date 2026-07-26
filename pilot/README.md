@@ -39,11 +39,19 @@ pilot does not measure precision. It measures detection variance, navigation
 behaviour, and cost. Corpus-quality fixtures (Phase 1 and Phase 5) do carry
 distractors.
 
-`ANSWER.md` sits outside `repo/` for the same reason `fixture.yaml` will in the
+`ANSWER.md` sits outside `repo/` for the same reason `fixture.yaml` does in the
 real corpus — a reviewer whose working directory is the fixture root could read
-the answer key and post a perfect score. The pilot is not where that boundary
-gets enforced properly (Phase 1 does that with a real test), but the layout is
-right so the pilot's own numbers are not contaminated.
+the answer key and post a perfect score.
+
+**The 34 runs behind FINDINGS.md were made before that boundary was enforced.**
+Layout was the only thing standing between the reviewer and `ANSWER.md`. An
+audit of all 34 transcripts found 135 paths inside `repo/`, none outside, and no
+reference to the answer key — so those numbers are clean — but 22 calls did
+attempt absolute paths outside the working directory and failed only because
+those paths did not exist. `run_agentic.py` now enforces the boundary through
+`assay.executor`; any run from here on is confined for cause rather than by
+luck, and blocked attempts are recorded in each transcript under
+`boundary_violations`.
 
 ## Running it
 
@@ -58,9 +66,10 @@ export ANTHROPIC_API_KEY=sk-ant-...
 uv run pilot/run_singleshot.py --fixture small --runs 10
 
 # Q2 + Q3: navigation and caching. Agentic runs at each size.
-uv run pilot/run_agentic.py --fixture small  --runs 2 --reviewers correctness,security
-uv run pilot/run_agentic.py --fixture medium --runs 2 --reviewers correctness,security
-uv run pilot/run_agentic.py --fixture large  --runs 2 --reviewers correctness,security
+# Project venv, not `uv run` — this one imports the real answer-key boundary.
+.venv/bin/python pilot/run_agentic.py --fixture small  --runs 2 --reviewers correctness,security
+.venv/bin/python pilot/run_agentic.py --fixture medium --runs 2 --reviewers correctness,security
+.venv/bin/python pilot/run_agentic.py --fixture large  --runs 2 --reviewers correctness,security
 
 # Label the variance runs by hand — the pilot's K rests on these, not on the
 # proximity heuristic. The worksheet carries each run's findings inline.
@@ -72,8 +81,13 @@ cp pilot/out/labels.template.json pilot/out/labels.json
 uv run pilot/analyze.py
 ```
 
-Scripts use PEP 723 inline dependencies, so `uv run` needs no project venv —
-another reason this directory leaves no trace when it is deleted.
+`run_singleshot.py` and `analyze.py` use PEP 723 inline dependencies, so `uv
+run` needs no project venv. `run_agentic.py` is the exception: it imports
+`assay.executor` for the answer-key boundary and therefore runs under the
+project venv. That import is the pilot's one dependency on production code, and
+it is deliberate — the Phase 1 gate forbids a measurement run while the
+boundary is unenforced, so the harness that runs and the control that is tested
+must be the same code.
 
 Raw transcripts land in `pilot/out/` (gitignored). `analyze.py` reads them and
 prints the numbers that go into FINDINGS.md.

@@ -136,15 +136,27 @@ These gate Phase 1 completion. The first is the project's stated highest-severit
 failure mode; the other two corrupt the measurements Phase 1 itself depends on,
 because Phase 1 reuses the pilot harness for locality verification and the K run.
 
-- [ ] **Enforce the answer-key boundary, do not assume it.** `pilot/run_agentic.py`
-      confines the reviewer with `cwd` alone, under `permission_mode="bypassPermissions"`,
-      with no path check on `Read`/`Glob`/`Grep`. Nothing prevents `Read("../ANSWER.md")`.
-      Audit of all 34 pilot transcripts found **no** escape (135 paths inside `repo/`,
-      0 outside, 0 references to the answer key), so no published number is
+- [x] **Enforce the answer-key boundary, do not assume it.** (completed 2026-07-26)
+      `pilot/run_agentic.py` confined the reviewer with `cwd` alone, under
+      `permission_mode="bypassPermissions"`, with no path check on
+      `Read`/`Glob`/`Grep`. Nothing prevented `Read("../ANSWER.md")`. Audit of all
+      34 pilot transcripts found **no** escape (135 paths inside `repo/`, 0
+      outside, 0 references to the answer key), so no published number is
       contaminated — but 22 calls did attempt absolute paths outside the working
-      directory and failed only because those paths did not exist. The control is
-      absent, not merely untested. Covered by the executor-confinement task above;
-      no further measurement run happens until it lands.
+      directory and failed only because those paths did not exist. The control was
+      absent, not merely untested.
+      **Closed by** `assay.executor.confinement` (default-deny path boundary,
+      resolution-before-comparison so symlinks and `..` cannot slip through) plus
+      `assay.executor.hooks` (a `PreToolUse` hook — *not* `can_use_tool`, which
+      the Agent SDK never invokes under `bypassPermissions` or a whole-tool
+      `allowed_tools` entry, and which would therefore have been a control that
+      silently never fired). 24 isolation tests, one per escape route. Wired into
+      `run_agentic.py`, which now runs under the project venv and records blocked
+      attempts per run under `boundary_violations`.
+      **Not yet proven end to end:** that the SDK honours a `PreToolUse` deny at
+      runtime rests on the SDK's own documentation, not on an observed refusal.
+      The first confined run must include a deliberate bait call and confirm it
+      is refused — see the Phase 1 gate.
 - [ ] **Surface `parse_error` in scoring.** Both runners record `parse_error` and
       fall back to an empty finding list, but `analyze.py` never reads the field —
       so a structured-output parse failure is statistically identical to "the
@@ -160,8 +172,12 @@ because Phase 1 reuses the pilot harness for locality verification and the K run
 - [ ] Implement the corpus loader with locality tagging. Loader validation
       asserts `change.patch` reverses cleanly against `repo/` — the pilot caught
       two patches that had silently drifted from their tree.
-- [ ] Implement executor working-directory confinement: cwd is `repo/`, no
-      parent traversal, no network.
+- [x] Implement executor working-directory confinement: cwd is `repo/`, no
+      parent traversal. (completed 2026-07-26 — `src/assay/executor/`; see the
+      QA-blocker entry above for the mechanism and the one remaining
+      end-to-end check. Network confinement is not implemented: the reviewer's
+      toolset has no network tool, so there is nothing to confine until
+      `SarifReviewer` shells out in Phase 2, where it belongs.)
 - [ ] Author `TS-0001` end to end, including NOTES.md provenance.
 - [ ] **Treat recall saturation as an authoring failure.** The Phase 0 pilot hit
       100% detection on 3 of 3 defects across 34 runs. If `TS-0001`'s defect is
@@ -187,9 +203,17 @@ Before Phase 2, these must be true:
       numbers.
 - [ ] `TS-0001`'s locality tag is verified by measurement, not asserted.
 - [ ] Isolation test passes, and manifest validation rejects a patch that does
-      not reverse against `repo/`.
-- [ ] The three QA blockers above are closed. No measurement run that feeds a
-      recorded decision happens while the answer-key boundary is unenforced.
+      not reverse against `repo/`. (Isolation test: **passing** as of 2026-07-26,
+      24 cases. Patch-reversal check lands with the loader.)
+- [ ] **A live run confirms the `PreToolUse` deny actually fires.** The isolation
+      test proves the boundary's logic; it does not prove the Agent SDK honours
+      the refusal. The first confined run on `TS-0001` carries a bait file
+      outside `repo/` and a prompt inviting the reviewer to read it; the gate
+      clears when the transcript shows the call refused and recorded under
+      `boundary_violations`. Until then the boundary is argued, not observed.
+- [ ] The remaining two QA blockers above are closed. No measurement run that
+      feeds a recorded decision happens until the answer-key boundary is both
+      enforced (done) and observed to fire (above).
 
 ---
 
@@ -377,7 +401,7 @@ published run ID.
 
 | Risk | Impact | Likelihood | Mitigation |
 |---|---|---|---|
-| Answer-key leakage into reviewer context | Critical — all numbers invalid, silently | Low **→ raised 2026-07-26**: the pilot harness enforces nothing beyond `cwd`, and reviewers were observed attempting absolute paths outside it | Executor path confinement; history-free fixtures; isolation test treated as correctness-critical; re-verified whenever executor or layout changes. **Until confinement lands, audit transcripts for out-of-`repo/` paths after every run batch** — that audit is what established the pilot's own numbers were clean |
+| Answer-key leakage into reviewer context | Critical — all numbers invalid, silently | Low **→ raised, then lowered again 2026-07-26**: the pilot harness enforced nothing beyond `cwd` and reviewers were observed attempting absolute paths outside it; `assay.executor` now denies those calls by default and records them | Executor path confinement (default-deny, symlink- and `..`-resolving); history-free fixtures; isolation test treated as correctness-critical and re-run whenever executor or layout changes. **Keep auditing transcripts for out-of-`repo/` paths after every run batch** — the boundary is enforced but not yet observed firing against a live SDK, and the audit is what established the pilot's own numbers were clean |
 | Judge agreement too low to trust | Critical — blocks the project | Medium | Phase 3 readiness gate stops work; revise judge, never the labels |
 | Run-to-run variance swamps signal; K must rise | High — cost scales with K | Medium | Measured in Phase 0 before anything is built on an assumed K |
 | Agent SDK blocks prefix caching | Medium — agentic cost rises | Medium | Measured in Phase 0; fallback is a Client SDK tool loop for the agentic reviewer |

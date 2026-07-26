@@ -1,5 +1,17 @@
 """Corpus format: manifest schema, taxonomy, loader, locality verification."""
 
+from assay.corpus.loader import (
+    LOCALITY_ORDER,
+    MANIFEST_NAME,
+    NOTES_NAME,
+    REPO_DIR,
+    Fixture,
+    FixtureError,
+    Hunk,
+    load_corpus,
+    load_fixture,
+    parse_diff,
+)
 from assay.corpus.manifest import (
     Defect,
     Distractor,
@@ -22,12 +34,19 @@ from assay.corpus.taxonomy import (
 
 __all__ = [
     "EXCLUDED_CLASSES",
+    "LOCALITY_ORDER",
+    "MANIFEST_NAME",
+    "NOTES_NAME",
+    "REPO_DIR",
     "TAXONOMY",
     "ClassDefinition",
     "Defect",
     "DefectClass",
     "Distractor",
+    "Fixture",
+    "FixtureError",
     "FixtureManifest",
+    "Hunk",
     "Locality",
     "LocalityTag",
     "Location",
@@ -35,5 +54,8 @@ __all__ = [
     "Severity",
     "all_classes",
     "describe",
+    "load_corpus",
+    "load_fixture",
     "load_manifest",
+    "parse_diff",
 ]

@@ -115,6 +115,21 @@ class FixtureManifest(BaseModel):
     defects: list[Defect] = Field(min_length=1)
     distractors: list[Distractor] = Field(min_length=1)
 
+    @field_validator("diff")
+    @classmethod
+    def _diff_is_a_sibling_file(cls, value: str) -> str:
+        """The patch lives beside `repo/`, not above the fixture root.
+
+        Unvalidated, `diff: ../../secrets` would have the loader read an
+        arbitrary file and hand it to a reviewer as the change under review.
+        """
+        path = Path(value)
+        if not value or path.is_absolute() or ".." in path.parts:
+            raise ValueError(
+                f"must name a file inside the fixture directory, got {value!r}"
+            )
+        return value
+
     @field_validator("language")
     @classmethod
     def _typescript_only(cls, value: str) -> str:

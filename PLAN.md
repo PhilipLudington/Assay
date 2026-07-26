@@ -178,9 +178,25 @@ because Phase 1 reuses the pilot harness for locality verification and the K run
 - [x] Write the closed defect-class taxonomy for TypeScript; document why each
       class is in it. (completed 2026-07-26 — 7 classes with per-class rationale
       and an explicit distinguished-from, plus 5 recorded exclusions)
-- [ ] Implement the corpus loader with locality tagging. Loader validation
+- [x] Implement the corpus loader with locality tagging. Loader validation
       asserts `change.patch` reverses cleanly against `repo/` — the pilot caught
-      two patches that had silently drifted from their tree.
+      two patches that had silently drifted from their tree. (completed
+      2026-07-26 — `assay.corpus.loader`, 30 tests / 31 cases, 21 of them
+      rejections. `load_manifest` proves the answer key is well-formed; the
+      loader proves it is *true of this tree*: the patch reverses, every defect
+      and distractor location names a real file and a line range inside it, the
+      diff's touched files exist, and no copy of `fixture.yaml` or `NOTES.md`
+      sits inside `repo/` — the one leak the per-call path boundary cannot see,
+      since a reviewer reading it never crosses the boundary. `assert_isolated`
+      is reused rather than reimplemented, so authoring-time and run-time
+      isolation are the same definition. Also closed a schema gap the loader
+      exposed: `diff:` accepted `../../anything`, which would have fed an
+      arbitrary file to a reviewer as the change under review.
+      **Locality tagging here is structural only** — `structural_locality`
+      returns the *closest* tier the diff's shape permits, so a `local` claim on
+      a defect outside every hunk is refused while a `cross_file` claim on one
+      inside a hunk is allowed. Settling a tag is the measurement task below;
+      this bounds it, it does not decide it.)
 - [x] Implement executor working-directory confinement: cwd is `repo/`, no
       parent traversal. (completed 2026-07-26 — `src/assay/executor/`; see the
       QA-blocker entry above for the mechanism and the one remaining
@@ -211,9 +227,11 @@ Before Phase 2, these must be true:
       it — see FINDINGS. Choose the acceptable CI half-width *before* reading the
       numbers.
 - [ ] `TS-0001`'s locality tag is verified by measurement, not asserted.
-- [ ] Isolation test passes, and manifest validation rejects a patch that does
-      not reverse against `repo/`. (Isolation test: **passing** as of 2026-07-26,
-      56 cases. Patch-reversal check lands with the loader.)
+- [x] Isolation test passes, and manifest validation rejects a patch that does
+      not reverse against `repo/`. (Both **passing** as of 2026-07-26 — isolation
+      56 cases, loader 31. The reversal check landed in `assay.corpus.loader`
+      rather than in manifest validation, since it needs the fixture tree and
+      not just the manifest.)
 - [ ] **A live run confirms the `PreToolUse` deny actually fires.** The isolation
       test proves the boundary's logic; it does not prove the Agent SDK honours
       the refusal. The first confined run on `TS-0001` carries a bait file

@@ -73,7 +73,7 @@ disposable code.
       since agentic cost came in at $0.28–$0.41/run.)
 - [x] Record actual cost per agentic and per single-shot run at each repo size.
       (completed 2026-07-25 — agentic is near-flat 25→50 files; corrected sweep
-      model puts K=5 at $18.65 on batch, well inside the $50 goal.)
+      model puts K=5 at $18.66 on batch, well inside the $50 goal.)
 - [x] Write `pilot/FINDINGS.md`. (completed 2026-07-25)
 - [x] Decide how to resolve the failed K gate condition. (decided 2026-07-26 —
       reword the gate to name precision variance and move the K measurement to
@@ -121,14 +121,39 @@ Before Phase 1, these must be true:
 ### Tasks
 - [x] Define the `fixture.yaml` schema and validate it on load (fail loudly on
       a malformed or incomplete manifest). (completed 2026-07-26 — pydantic
-      schema, 18 rejection tests. The patch-reverses check moves to the loader
-      task below, since it needs the fixture tree and not just the manifest.)
+      schema, 16 tests / 18 cases, 14 of them rejections. The patch-reverses
+      check moves to the loader task below, since it needs the fixture tree and
+      not just the manifest.)
 - [ ] Implement the locality-verification step: run the single-shot reviewer
       with no tools; a defect it finds is not `cross_file`. Locality is measured,
       not asserted (DESIGN Key Decisions, added after the Phase 0 pilot found two
       of three tags wrong).
 - [ ] Measure precision variance on `TS-0001` *with* its distractor and settle K.
       Carried over from the Phase 0 gate.
+
+#### Blockers raised by the 2026-07-26 QA review
+These gate Phase 1 completion. The first is the project's stated highest-severity
+failure mode; the other two corrupt the measurements Phase 1 itself depends on,
+because Phase 1 reuses the pilot harness for locality verification and the K run.
+
+- [ ] **Enforce the answer-key boundary, do not assume it.** `pilot/run_agentic.py`
+      confines the reviewer with `cwd` alone, under `permission_mode="bypassPermissions"`,
+      with no path check on `Read`/`Glob`/`Grep`. Nothing prevents `Read("../ANSWER.md")`.
+      Audit of all 34 pilot transcripts found **no** escape (135 paths inside `repo/`,
+      0 outside, 0 references to the answer key), so no published number is
+      contaminated — but 22 calls did attempt absolute paths outside the working
+      directory and failed only because those paths did not exist. The control is
+      absent, not merely untested. Covered by the executor-confinement task above;
+      no further measurement run happens until it lands.
+- [ ] **Surface `parse_error` in scoring.** Both runners record `parse_error` and
+      fall back to an empty finding list, but `analyze.py` never reads the field —
+      so a structured-output parse failure is statistically identical to "the
+      reviewer found nothing". Incidence in the pilot was 0/34, so FINDINGS is
+      unaffected, but the Phase 4 scorer must not reproduce the pattern.
+- [ ] **Give `run_singleshot.py` the retry/record wrapper `run_agentic.py` has.**
+      It has no `try`/`except` at all, so one transient API error aborts the batch
+      and silently skips every remaining run — the exact failure fixed for the
+      agentic path mid-pilot and never backported.
 - [x] Write the closed defect-class taxonomy for TypeScript; document why each
       class is in it. (completed 2026-07-26 — 7 classes with per-class rationale
       and an explicit distinguished-from, plus 5 recorded exclusions)
@@ -163,6 +188,8 @@ Before Phase 2, these must be true:
 - [ ] `TS-0001`'s locality tag is verified by measurement, not asserted.
 - [ ] Isolation test passes, and manifest validation rejects a patch that does
       not reverse against `repo/`.
+- [ ] The three QA blockers above are closed. No measurement run that feeds a
+      recorded decision happens while the answer-key boundary is unenforced.
 
 ---
 
@@ -350,7 +377,7 @@ published run ID.
 
 | Risk | Impact | Likelihood | Mitigation |
 |---|---|---|---|
-| Answer-key leakage into reviewer context | Critical — all numbers invalid, silently | Low | Executor path confinement; history-free fixtures; isolation test treated as correctness-critical; re-verified whenever executor or layout changes |
+| Answer-key leakage into reviewer context | Critical — all numbers invalid, silently | Low **→ raised 2026-07-26**: the pilot harness enforces nothing beyond `cwd`, and reviewers were observed attempting absolute paths outside it | Executor path confinement; history-free fixtures; isolation test treated as correctness-critical; re-verified whenever executor or layout changes. **Until confinement lands, audit transcripts for out-of-`repo/` paths after every run batch** — that audit is what established the pilot's own numbers were clean |
 | Judge agreement too low to trust | Critical — blocks the project | Medium | Phase 3 readiness gate stops work; revise judge, never the labels |
 | Run-to-run variance swamps signal; K must rise | High — cost scales with K | Medium | Measured in Phase 0 before anything is built on an assumed K |
 | Agent SDK blocks prefix caching | Medium — agentic cost rises | Medium | Measured in Phase 0; fallback is a Client SDK tool loop for the agentic reviewer |

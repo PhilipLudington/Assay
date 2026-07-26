@@ -205,7 +205,7 @@ Per run, at `claude-opus-5` / effort `high`:
 | medium | 25 | $0.082 | $0.407 | 11.7 |
 | large | 50 | $0.087 | $0.410 | 16.7 |
 
-Agentic cost is strikingly flat from 25 to 50 files (+1.5%) despite 47% more
+Agentic cost is strikingly flat from 25 to 50 files (+0.9%) despite 43% more
 turns — prompt caching absorbs most of the growth. **Repo size is close to free
 on the cost axis in this range, which removes the main argument for choosing
 the small end of DESIGN's size assumption.**

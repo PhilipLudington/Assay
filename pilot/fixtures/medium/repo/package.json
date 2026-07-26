@@ -1,0 +1,17 @@
+{
+  "name": "@acme/jobqueue",
+  "version": "1.2.0",
+  "description": "In-process job queue with retries, backoff and a bounded worker pool.",
+  "license": "MIT",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --test dist/**/*.test.js",
+    "lint": "eslint src --ext .ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

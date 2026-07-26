@@ -4,6 +4,10 @@ IDEA.private.md
 # Transcripts are large and regenerable; published results are committed.
 results/runs/
 
+# Pilot transcripts. The pilot itself is deleted at the end of Phase 1;
+# its raw runs never belong in history.
+pilot/out/
+
 # Python
 __pycache__/
 *.py[cod]

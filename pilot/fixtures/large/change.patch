@@ -1,0 +1,65 @@
+commit 91c04ae7bb2f6d5813e0aa47cf20936d5b7e1c48
+Author: Tomás Herrera <tomas@acme.example>
+Date:   Mon Jun 15 09:41:22 2026 +0100
+
+    Add PATCH /shipments/:id for customer corrections
+
+    Support has been raising tickets to fix typo'd references and wrong
+    destination postcodes on booked shipments, which currently means a
+    cancel-and-rebook and a new tracking number for the customer.
+
+    Adds a partial-update endpoint behind shipments:write. The patch body is
+    validated with validateShipmentPatch, which only admits the fields a
+    correction is allowed to touch.
+
+    Closes SHIP-2214.
+
+diff --git a/src/routes/shipments.ts b/src/routes/shipments.ts
+index 6e0b9d4..a71f382 100644
+--- a/src/routes/shipments.ts
++++ b/src/routes/shipments.ts
+@@ -10,5 +10,9 @@ import type { ShipmentService } from '../services/shipment-service.js';
+ import type { TrackingService } from '../services/tracking-service.js';
++import type { Clock } from '../util/clock.js';
+ import { paginate, parsePageRequest } from '../util/pagination.js';
+-import { validateShipmentCreate } from '../validation/shipment-validator.js';
++import {
++  validateShipmentCreate,
++  validateShipmentPatch,
++} from '../validation/shipment-validator.js';
+
+ export function shipmentRoutes(
+@@ -15,4 +19,5 @@ export function shipmentRoutes(
+   shipmentService: ShipmentService,
+   shipmentRepo: ShipmentRepo,
+   tracking: TrackingService,
++  clock: Clock,
+ ): Router {
+@@ -67,3 +72,17 @@ export function shipmentRoutes(
+   });
+
++  router.patch('/shipments/:id', async (request, response) => {
++    const principal = requirePrincipal(request);
++    requireScope(principal, Scope.ShipmentsWrite);
++
++    const id = pathParam(request, 'id');
++    const patch = validateShipmentPatch(request.body);
++
++    const updated = await shipmentRepo.update(id, patch, clock.isoNow());
++    if (!updated) {
++      throw notFound(`shipment ${id} not found`);
++    }
++    json(response, Status.Ok, updated);
++  });
++
+   router.post('/shipments/:id/book', async (request, response) => {
+diff --git a/src/routes/index.ts b/src/routes/index.ts
+index 2c7fa10..d40e6b3 100644
+--- a/src/routes/index.ts
++++ b/src/routes/index.ts
+@@ -28,4 +28,4 @@ export function buildRoutes(deps: RouteDependencies): { routers: Router[]; termin
+   const routers = [
+     healthRoutes(deps.clock, deps.version),
+-    shipmentRoutes(deps.shipmentService, deps.shipmentRepo, deps.trackingService),
++    shipmentRoutes(deps.shipmentService, deps.shipmentRepo, deps.trackingService, deps.clock),
+     carrierRoutes(deps.carrierService),

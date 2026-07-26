@@ -1,0 +1,48 @@
+commit 7f2c1ab9d4e05c33b81a6f0e2d9c4471aa38b512
+Author: Dana Okonkwo <dana@acme.example>
+Date:   Tue Jun 9 11:24:03 2026 +0100
+
+    Only grant whole tokens on refill
+
+    Fractional token balances were leaking into the Decision returned to
+    callers, so `remaining` showed values like 4.7333 in our API responses
+    and in the dashboard. Round refills down to whole tokens so the number
+    we hand out is the number a caller can actually spend.
+
+diff --git a/src/bucket.ts b/src/bucket.ts
+index 3a91f4c..c5d80e7 100644
+--- a/src/bucket.ts
++++ b/src/bucket.ts
+@@ -22,16 +22,16 @@ export class TokenBucket {
+     this.lastRefill = now;
+   }
+
+   /**
+-   * Grant the tokens earned since the last refill and advance the refill
+-   * mark to `now`.
++   * Grant the whole tokens earned since the last refill and advance the
++   * refill mark to `now`.
+    */
+   private refill(now: Millis): void {
+     const elapsed = now - this.lastRefill;
+     if (elapsed <= 0) {
+       return;
+     }
+-    const earned = (elapsed / 1000) * this.refillPerSecond;
++    const earned = Math.floor((elapsed / 1000) * this.refillPerSecond);
+     this.tokens = Math.min(this.capacity, this.tokens + earned);
+     this.lastRefill = now;
+   }
+diff --git a/src/types.ts b/src/types.ts
+index 8b4e2d1..1f7a903 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -9,7 +9,7 @@ export type Millis = number;
+ export interface Decision {
+   /** Whether the caller may proceed. */
+   allowed: boolean;
+-  /** Tokens left in the bucket after this decision. May be fractional. */
++  /** Tokens left in the bucket after this decision. */
+   remaining: number;
+   /**
+    * Milliseconds until at least one token is available again. Zero when the

@@ -1,0 +1,17 @@
+{
+  "name": "@acme/shipping-api",
+  "version": "2.7.1",
+  "private": true,
+  "description": "Shipment tracking and quoting API.",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "test": "node --test dist/**/*.test.js",
+    "lint": "eslint src --ext .ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

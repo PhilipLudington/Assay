@@ -1,0 +1,17 @@
+{
+  "name": "@acme/ratelimit",
+  "version": "0.4.2",
+  "description": "Token-bucket rate limiting for in-process request handling.",
+  "license": "MIT",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --test dist/**/*.test.js",
+    "lint": "eslint src --ext .ts"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  }
+}

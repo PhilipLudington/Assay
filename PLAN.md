@@ -15,7 +15,11 @@ before any scoring logic is built on top of it.
 Scope is v1 only. SARIF output, the fix-commit mining pipeline, and a possible
 execute mode live beyond this plan; when v1 ships they move to ROADMAP.md.
 
-**Current status:** Phase 0 not started.
+**Current status:** Phase 0 complete (34 runs, $7.89) — see
+[pilot/FINDINGS.md](pilot/FINDINGS.md). Repo size and caching are settled. The K
+condition was found unmeetable in Phase 0 and the gate was reworded on 2026-07-26
+to name precision variance, moving the K decision to the end of Phase 1. Phase 1
+in progress.
 
 **Budget:** The DESIGN goal of "full sweep under $50" refers to the Phase 6
 publication sweep. Development spend across Phases 0–5 is separate and estimated
@@ -41,18 +45,40 @@ disposable code.
 - Three hand-built scratch fixtures (not corpus-quality, just enough to measure).
 
 ### Tasks
-- [ ] Build three scratch fixtures at different repo sizes (~8, ~25, ~50 source
-      files), each with one known defect.
-- [ ] Run a single reviewer prompt against one fixture 10 times; measure
-      finding-set variance to determine whether K=5 is sufficient or K must rise.
-- [ ] Measure whether `Glob`/`Grep` navigation is non-trivial at each repo size —
-      i.e. does the agent actually have to search, or does one call return
-      everything?
-- [ ] Determine whether the Agent SDK permits fixture-first system-block
-      composition with a `cache_control` breakpoint. Record
-      `cache_read_input_tokens` across consecutive reviewer runs on one fixture.
-- [ ] Record actual cost per agentic and per single-shot run at each repo size.
-- [ ] Write `pilot/FINDINGS.md`.
+- [x] Build three scratch fixtures at different repo sizes (~8, ~25, ~50 source
+      files), each with one known defect. (completed 2026-07-24 — 8/25/50 files,
+      all typecheck clean, each `change.patch` asserted to reverse against its
+      `repo/`)
+- [x] Build the measurement harness: `run_singleshot.py`, `run_agentic.py`,
+      `analyze.py`. (completed 2026-07-24 — analysis path validated end to end
+      against synthetic transcripts)
+- [x] Run a single reviewer prompt against one fixture 10 times; measure
+      finding-set variance. (completed 2026-07-25 — detection was 1.00 in all 34
+      runs, so recall variance is zero and K cannot be chosen from it; finding-set
+      Jaccard ranged 0.11–0.81, so the deciding statistic is precision variance,
+      which needs distractors. K decision moved to end of Phase 1.)
+- [x] Measure whether `Glob`/`Grep` navigation is non-trivial at each repo size.
+      (completed 2026-07-25 — share of repo read: 79% at 8 files, 32% at 25, 23%
+      at 50. Answer: 25–50 files.)
+- [x] Determine whether the Agent SDK permits fixture-first system-block
+      composition with a `cache_control` breakpoint. (answered 2026-07-24 — **no**;
+      `system_prompt` takes a single string with no `cache_control` surface)
+- [x] Record `cache_read_input_tokens` across consecutive reviewer runs on one
+      fixture. (completed 2026-07-25 — single-shot cross-reviewer sharing
+      confirmed: the second reviewer's first run read the prefix the first wrote.
+      Agentic caching is substantial but `model_usage` aggregates across turns,
+      so intra-run and cross-run reuse cannot be separated.)
+- [x] Correct the DESIGN cost-controls table. (completed 2026-07-25 — table split
+      by mode; the Client SDK tool-loop fallback is explicitly **not** triggered,
+      since agentic cost came in at $0.28–$0.41/run.)
+- [x] Record actual cost per agentic and per single-shot run at each repo size.
+      (completed 2026-07-25 — agentic is near-flat 25→50 files; corrected sweep
+      model puts K=5 at $18.65 on batch, well inside the $50 goal.)
+- [x] Write `pilot/FINDINGS.md`. (completed 2026-07-25)
+- [x] Decide how to resolve the failed K gate condition. (decided 2026-07-26 —
+      reword the gate to name precision variance and move the K measurement to
+      the end of Phase 1, once `TS-0001` carries a distractor. K remains
+      provisionally 5 and explicitly unjustified until then.)
 
 ### Testing Strategy
 No automated tests — this phase produces knowledge, not software. It is complete
@@ -61,12 +87,21 @@ yes/no on Agent SDK cache control, each with the measurement that justifies it.
 
 ### Phase 0 Readiness Gate
 Before Phase 1, these must be true:
-- [ ] K is chosen and justified by observed variance, not assumed.
-- [ ] Fixture repo size range is chosen and justified by observed navigation
-      behavior and cost.
-- [ ] Agent SDK cache-control question is answered yes or no. If **no**, the
-      agentic-reviewer cost estimate is revised and the DESIGN cost-controls
-      table is corrected before proceeding.
+- [x] ~~K is chosen and justified by observed variance, not assumed.~~
+      **Reworded 2026-07-26 and moved to the Phase 1 gate.** Recall variance
+      measured zero across 34 runs, so the CI is ±0.00 at every K; the statistic
+      that actually varies is precision, and precision is not a designed
+      measurement until a fixture carries a distractor. Since the first such
+      fixture is Phase 1's own deliverable, the condition was circular. The
+      replacement condition now reads: *K is chosen and justified by observed
+      **precision** variance on a distractor-carrying fixture* — and it gates
+      Phase 2, not Phase 1. K is provisionally 5 and explicitly unjustified in
+      the interim; no published number may rest on it until the gate clears.
+- [x] Fixture repo size range is chosen and justified by observed navigation
+      behavior and cost. (2026-07-25 — **25–50 source files**)
+- [x] Agent SDK cache-control question is answered yes or no. (2026-07-25 —
+      **no**; cost estimate revised upward-but-affordable and the DESIGN
+      cost-controls table corrected)
 
 ---
 
@@ -84,14 +119,31 @@ Before Phase 1, these must be true:
 - `pilot/` deleted.
 
 ### Tasks
-- [ ] Define the `fixture.yaml` schema and validate it on load (fail loudly on
-      a malformed or incomplete manifest).
-- [ ] Write the closed defect-class taxonomy for TypeScript; document why each
-      class is in it.
-- [ ] Implement the corpus loader with locality tagging.
+- [x] Define the `fixture.yaml` schema and validate it on load (fail loudly on
+      a malformed or incomplete manifest). (completed 2026-07-26 — pydantic
+      schema, 18 rejection tests. The patch-reverses check moves to the loader
+      task below, since it needs the fixture tree and not just the manifest.)
+- [ ] Implement the locality-verification step: run the single-shot reviewer
+      with no tools; a defect it finds is not `cross_file`. Locality is measured,
+      not asserted (DESIGN Key Decisions, added after the Phase 0 pilot found two
+      of three tags wrong).
+- [ ] Measure precision variance on `TS-0001` *with* its distractor and settle K.
+      Carried over from the Phase 0 gate.
+- [x] Write the closed defect-class taxonomy for TypeScript; document why each
+      class is in it. (completed 2026-07-26 — 7 classes with per-class rationale
+      and an explicit distinguished-from, plus 5 recorded exclusions)
+- [ ] Implement the corpus loader with locality tagging. Loader validation
+      asserts `change.patch` reverses cleanly against `repo/` — the pilot caught
+      two patches that had silently drifted from their tree.
 - [ ] Implement executor working-directory confinement: cwd is `repo/`, no
       parent traversal, no network.
 - [ ] Author `TS-0001` end to end, including NOTES.md provenance.
+- [ ] **Treat recall saturation as an authoring failure.** The Phase 0 pilot hit
+      100% detection on 3 of 3 defects across 34 runs. If `TS-0001`'s defect is
+      also found by every single-shot run, the fixture is too easy and gets
+      reworked — a corpus at the recall ceiling cannot answer whether tools help,
+      because recall has nowhere to climb. Record the observed detection rate in
+      NOTES.md alongside the provenance.
 - [ ] Strip git history from fixture repos as a build step, not a manual habit.
 - [ ] Delete `pilot/`.
 
@@ -101,6 +153,16 @@ Before Phase 1, these must be true:
   `repo/` cannot read `fixture.yaml`, cannot traverse to the fixture root, and
   finds no git history. This test failing invalidates every number the project
   will ever produce and is treated accordingly.
+
+### Phase 1 Readiness Gate
+Before Phase 2, these must be true:
+- [ ] **K is chosen and justified by observed precision variance** on `TS-0001`
+      with its distractor. Inherited from the Phase 0 gate, which could not meet
+      it — see FINDINGS. Choose the acceptable CI half-width *before* reading the
+      numbers.
+- [ ] `TS-0001`'s locality tag is verified by measurement, not asserted.
+- [ ] Isolation test passes, and manifest validation rejects a patch that does
+      not reverse against `repo/`.
 
 ---
 
@@ -117,7 +179,12 @@ Before Phase 1, these must be true:
 - `assay run` CLI command.
 
 ### Tasks
-- [ ] Implement the `Executor` protocol and `AgentSDKExecutor`.
+- [ ] Implement the `Executor` protocol and `AgentSDKExecutor`, with a per-run
+      wall-clock deadline and per-run retry. Both are required, not defensive
+      polish: the Phase 0 pilot saw one run stall for 29 minutes against an ~85s
+      median (a parent `timeout` did not reach it), and transient
+      `Claude Code returned an error result` failures in roughly 1 run in 4. A
+      failure must cost one run, never a batch.
 - [ ] Implement the review context floor: diff + full contents of touched files,
       assembled identically for every mode.
 - [ ] Implement `SingleShotReviewer` (Client SDK, no tools).

@@ -279,11 +279,25 @@ All four are structural, not afterthoughts.
 | Replay | `score` never calls a model. Re-scoring is free by construction. |
 | Batch API | Sweeps are non-latency-sensitive; runs submit as batches at 50% off. |
 | Model tiering | Judge and dedup run on Haiku. Reviewers run on the model under test. |
-| Prompt caching | Fixture content is placed **first** in the system block with a cache breakpoint, reviewer-specific instructions after it. All reviewers on a fixture then share a prefix, so the first pays the write and the rest read at ~0.1×. |
+| Prompt caching | **Single-shot only:** fixture content is placed first in the system block with a cache breakpoint, reviewer-specific instructions after it, so all reviewers on a fixture share a prefix — the first pays the write and the rest read at ~0.1×. **Agentic:** the Agent SDK exposes no breakpoint; caching is automatic and not steerable. |
 
 That last one inverts the intuitive ordering (instructions first, then content)
 and is worth calling out to anyone reading the code, because it looks wrong
 until you know why.
+
+**Corrected 2026-07-25 after the Phase 0 pilot.** The row originally claimed
+this ordering for every reviewer. It is not available to the agentic reviewer:
+`ClaudeAgentOptions.system_prompt` takes a single string, with no list-of-blocks
+form and no `cache_control` field anywhere in the options surface. The
+single-shot claim was measured and holds — a second reviewer's *first* run read
+the prefix the first reviewer wrote. For the agentic reviewer, caching is
+substantial but its attribution is not measurable through
+`ResultMessage.model_usage`, which aggregates across all turns of a run.
+
+This does not trigger the "fall back to a Client SDK tool loop" contingency
+below: measured agentic cost is $0.28–$0.41 per run and near-flat from 25 to 50
+source files, so the cost blow-up that contingency existed to prevent did not
+materialise. See [pilot/FINDINGS.md](pilot/FINDINGS.md).
 
 ### Repo layout
 
@@ -404,6 +418,24 @@ assay/
   the matcher or the floor, and that needs discovering before publication rather
   than after.
 
+- **Decision:** A defect's `locality` tag is **measured, not asserted by the
+  fixture author**, added 2026-07-25.
+  **Alternatives considered:** The author assigns the tag when writing the
+  fixture (the original design); a second author reviews the tag.
+  **Rationale:** The Phase 0 pilot disproved author-assigned tagging on its own
+  fixtures — two of three defects were authored as `cross_file` and both were
+  found by a single-shot reviewer with no tool access, because the evidence had
+  leaked into the touched file (once as a class comment restating the broken
+  invariant, once as a visible asymmetry with sibling handlers). Neither fixture
+  looked wrong on inspection, and the author was actively trying to avoid that
+  failure. Since the headline result is reported *broken out by locality*, bad
+  tags yield a confidently wrong finding rather than a noisy one.
+  **The procedure:** run the single-shot reviewer against the fixture with no
+  tools; if it finds the defect, the defect is not `cross_file`, whatever was
+  intended. `cross_file` is claimed only for defects that survive. This is
+  nearly free — single-shot runs cost ~$0.05–$0.09 — and it is the same run the
+  sweep performs anyway, so it is self-financing.
+
 - **Decision:** Reviewer isolation is enforced by the executor and asserted by a
   test, with the manifest stored outside `repo/` and fixtures shipped without
   git history.
@@ -478,12 +510,22 @@ tune the adjudication set until it looks better.
 will be too wide to detect anything and K has to rise, with cost rising in step.
 This is the most likely reason the budget estimate proves wrong.
 
-**Prompt-cache prefix sharing may not survive the Agent SDK.** The fixture-first
-system block ordering assumes enough control over system composition and cache
-breakpoints. The Agent SDK is a higher-level harness and may not expose it. If
-not, agentic reviewers lose most caching benefit and cost rises materially,
-while single-shot reviewers (Client SDK) keep it. Flagged as an open question
-because it changes the cost model rather than the design.
+**~~Prompt-cache prefix sharing may not survive the Agent SDK.~~ Resolved
+2026-07-25.** It does not survive as an *explicit* breakpoint — the Agent SDK
+exposes no such control — but the feared consequence did not follow. Agentic
+runs still cache heavily and cost $0.28–$0.41 per run, roughly flat across 25
+and 50 source files. Single-shot keeps full, measured prefix sharing. See the
+cost-controls table above.
+
+**A defect's locality can be leaked into the review floor by the touched file
+itself.** Discovered in the Phase 0 pilot, where two of three seeded defects
+were authored as `cross_file` and both turned out reachable from the floor — one
+via a class comment in the touched file restating the very invariant the diff
+broke, the other via the visible asymmetry between the new handler and its
+siblings. Neither fixture looks wrong on inspection. Because the tools-vs-no-tools
+result is reported *broken out by locality*, a mis-tagged corpus does not produce
+a noisy result, it produces a confidently wrong one. Mitigation: locality is
+measured, not asserted — see Key Decisions.
 
 **Answer-key leakage is the highest-severity failure mode.** If a reviewer can
 reach `fixture.yaml`, the repo's git history, or any other trace of the intended
@@ -511,11 +553,16 @@ can reasonably go.
 
 ## Open Questions
 
-- [ ] Does the Agent SDK expose sufficient control over system-block composition
-      and `cache_control` placement for prefix sharing? If not, does the agentic
-      reviewer drop to the Client SDK with a hand-rolled tool loop?
-- [ ] Is K=5 sufficient? Determine empirically from a pilot on 3 fixtures before
-      committing the full sweep.
+- [x] ~~Does the Agent SDK expose sufficient control over system-block
+      composition and `cache_control` placement for prefix sharing?~~
+      **Resolved 2026-07-25.** No — `system_prompt` is a single string. The
+      agentic reviewer does **not** drop to a hand-rolled Client SDK tool loop:
+      measured cost did not justify it. Cost-controls table corrected.
+- [ ] Is K=5 sufficient? **Reframed 2026-07-25.** The pilot found recall
+      variance to be zero (detection 1.00 across 34 runs), so K cannot be chosen
+      from it; what varies is the non-seeded findings, i.e. precision. K is
+      therefore a precision question and cannot be settled until fixtures carry
+      distractors. Deferred to the end of Phase 1, measured on `TS-0001`.
 - [x] ~~Does a reviewer see only the diff, or the whole repo?~~ **Resolved
       2026-07-24.** Floor is diff + touched files, identical across modes;
       agentic ceiling is read-only repo navigation; execution deferred against a
@@ -524,10 +571,12 @@ can reasonably go.
       `cross_file` would flatter tools; one weighted toward `local` would bury
       the effect. Needs a defensible ratio decided before authoring, and stated
       in the README.
-- [ ] How large should a fixture repo be? Too small and `Glob` returns
-      everything, making navigation trivial and the ceiling meaningless; too
-      large and cost per run climbs. Working assumption ~15–40 source files,
-      to be validated in the pilot.
+- [x] ~~How large should a fixture repo be?~~ **Resolved 2026-07-25: 25–50
+      source files.** Measured share of the repo the agentic reviewer actually
+      reads: 79% at 8 files, 32% at 25, 23% at 50. At 8 files the tools are a
+      slow `cat` and the ceiling measures nothing. Cost does not push back —
+      agentic cost is near-flat from 25 to 50 files — so the original ~15–40
+      assumption had its floor too low.
 - [ ] One defect per fixture, or several? Several is more realistic; one makes
       attribution unambiguous.
 - [ ] Is the internal finding schema Assay-native with SARIF as an adapter, or

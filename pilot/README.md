@@ -51,7 +51,16 @@ attempt absolute paths outside the working directory and failed only because
 those paths did not exist. `run_agentic.py` now enforces the boundary through
 `assay.executor`; any run from here on is confined for cause rather than by
 luck, and blocked attempts are recorded in each transcript under
-`boundary_violations`.
+`boundary_violations`. A fixture carrying git history or symlinks is refused
+outright before the run starts.
+
+**One caveat, and it matters most to you if you are about to run this.** That
+the Agent SDK actually honours a `PreToolUse` deny is asserted from the SDK's
+own documentation — it has not yet been confirmed by an observed refusal
+against a live run. The boundary fails closed on its own errors, so a bug in
+*our* code denies rather than allows, but the CLI's behaviour on the far side
+is argued, not measured. Until the Phase 1 gate in [PLAN.md](../PLAN.md) clears,
+keep auditing transcripts for out-of-`repo/` paths after every batch.
 
 ## Running it
 

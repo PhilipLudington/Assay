@@ -132,13 +132,13 @@ Deliberate omissions, not oversights. The full fence is in
 
 ## Status
 
-Design is settled; implementation has not begun. Phases are defined in
+Design is settled; implementation is under way. Phases are defined in
 [PLAN.md](PLAN.md).
 
 | Phase | | Status |
 |---|---|---|
-| 0 | Pilot — resolve empirical unknowns | Not started |
-| 1 | Corpus format and isolation | Not started |
+| 0 | Pilot — resolve empirical unknowns | Complete (2026-07-26) |
+| 1 | Corpus format and isolation | In progress |
 | 2 | Reviewers and the run path | Not started |
 | 3 | Matching, judge, and judge validation | Not started |
 | 4 | Scoring and reporting | Not started |

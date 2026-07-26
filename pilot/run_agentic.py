@@ -23,7 +23,8 @@ reachable approximation of the DESIGN ordering. Whether that shared prefix
 actually earns a cache read across reviewers is exactly what we measure:
 compare `cache_read_input_tokens` on the second reviewer against the first.
 
-    uv run pilot/run_agentic.py --fixture medium --runs 2 --reviewers correctness,security
+    .venv/bin/python pilot/run_agentic.py --fixture medium --runs 2 \\
+        --reviewers correctness,security
 """
 
 from __future__ import annotations
@@ -172,10 +173,8 @@ async def one_run(fixture, reviewer: str, args) -> dict:
         "parse_error": None if structured else "no structured_output on ResultMessage",
         # Persisted, not just blocked: an attempted escape is evidence about
         # the fixture even when the boundary holds.
-        "boundary_violations": [
-            {"tool": v.tool, "field": v.field, "value": v.value, "reason": v.reason}
-            for v in boundary.violations
-        ],
+        "boundary_violations": boundary.records(),
+        "boundary_violations_suppressed": boundary.suppressed_violations,
         "usage": {
             "input_tokens": sum(u.get("inputTokens", 0) for u in model_usage.values()),
             "output_tokens": sum(u.get("outputTokens", 0) for u in model_usage.values()),

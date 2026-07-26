@@ -150,9 +150,18 @@ because Phase 1 reuses the pilot harness for locality verification and the K run
       `assay.executor.hooks` (a `PreToolUse` hook — *not* `can_use_tool`, which
       the Agent SDK never invokes under `bypassPermissions` or a whole-tool
       `allowed_tools` entry, and which would therefore have been a control that
-      silently never fired). 24 isolation tests, one per escape route. Wired into
-      `run_agentic.py`, which now runs under the project venv and records blocked
-      attempts per run under `boundary_violations`.
+      silently never fired; see DESIGN Key Decisions). 56 isolation cases across
+      34 tests. Wired into `run_agentic.py`, which now runs under the project
+      venv and records blocked attempts per run under `boundary_violations`.
+      **Hardened 2026-07-26 after QA review**, which found three gaps in the
+      first implementation: the hook could raise and be reduced by the SDK to an
+      unlogged protocol error of undocumented effect (it now fails closed and
+      records the failure); `Grep`'s `glob` field was declared checked but had no
+      test proving it (it does now); and "fixtures ship no symlinks" was a README
+      convention with nothing enforcing it (`assert_isolated` now refuses
+      symlinks and surviving VCS history before a run starts — these are the two
+      leak channels a per-call path check cannot see, since `Glob`/`Grep` expand
+      patterns themselves).
       **Not yet proven end to end:** that the SDK honours a `PreToolUse` deny at
       runtime rests on the SDK's own documentation, not on an observed refusal.
       The first confined run must include a deliberate bait call and confirm it
@@ -204,7 +213,7 @@ Before Phase 2, these must be true:
 - [ ] `TS-0001`'s locality tag is verified by measurement, not asserted.
 - [ ] Isolation test passes, and manifest validation rejects a patch that does
       not reverse against `repo/`. (Isolation test: **passing** as of 2026-07-26,
-      24 cases. Patch-reversal check lands with the loader.)
+      56 cases. Patch-reversal check lands with the loader.)
 - [ ] **A live run confirms the `PreToolUse` deny actually fires.** The isolation
       test proves the boundary's logic; it does not prove the Agent SDK honours
       the refusal. The first confined run on `TS-0001` carries a bait file

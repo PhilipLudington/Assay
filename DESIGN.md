@@ -182,11 +182,19 @@ Reserving the third value now costs nothing and turns a binary result into a
 three-point curve later.
 
 **Isolation is enforced, not assumed.** The executor sets the reviewer's working
-directory to `repo/` with a hard path boundary, no parent traversal, and no
-network. Fixtures ship without `.git`. A test in the suite asserts that a
-reviewer cannot reach `fixture.yaml` from inside `repo/`; that test failing
-invalidates every number in the repo, so it is treated as a correctness test,
-not a nicety.
+directory to `repo/` and refuses, per tool call, any path that resolves outside
+it — traversal, absolute, or through a symlink. Two leak channels the per-call
+check cannot see are refused as *preconditions*, before a run starts: surviving
+version-control history (a defect is recoverable from commit messages) and
+symlinks anywhere in the fixture (`Glob` and `Grep` expand patterns across them
+themselves, so only the declared path is ever visible to the boundary). A test
+in the suite asserts that a reviewer cannot reach `fixture.yaml` from inside
+`repo/`; that test failing invalidates every number in the repo, so it is
+treated as a correctness test, not a nicety.
+
+Network confinement is **not** implemented and is not needed yet: the reviewer's
+toolset contains no network tool. It becomes real work when `SarifReviewer`
+shells out to a third-party binary in Phase 2, and belongs there.
 
 ### Reviewer interface
 
@@ -444,6 +452,29 @@ assay/
   **Rationale:** A reviewer that can read the answer key scores perfectly and
   the failure is silent. This is the contamination failure mode that has
   invalidated real benchmarks, and convention is not a control.
+
+- **Decision:** The boundary is enforced by an Agent SDK **`PreToolUse` hook**,
+  not by the `can_use_tool` permission callback. Added 2026-07-26.
+  **Alternatives considered:** `can_use_tool`, which is the obvious surface and
+  reads as the intended one.
+  **Rationale:** The SDK auto-approves a tool call *before* `can_use_tool` runs
+  whenever `permission_mode="bypassPermissions"` is set or `allowed_tools` grants
+  a whole tool — and the reviewer configuration does both. The callback would
+  never have been invoked. That is worse than having no control, because the
+  code would read as enforced in review; the SDK emits a `CanUseToolShadowedWarning`
+  for exactly this mistake and names the hook as the remedy. Recorded here
+  because the next person to touch the executor will reach for `can_use_tool`
+  first, as this implementation did.
+
+- **Decision:** The hook fails closed on its own internal errors, not just on
+  recognised violations. Added 2026-07-26 after QA review.
+  **Rationale:** The SDK catches an exception raised inside a hook, replies to
+  the CLI with a protocol-level error, and logs nothing. Whether the CLI then
+  proceeds under `bypassPermissions` is undocumented. A boundary whose
+  correctness depends on an unverified answer to that question is not a
+  boundary, so any internal failure denies the call and is recorded as a
+  violation — a run in which the control broke must never be indistinguishable
+  from a clean one.
 
 - **Decision:** SARIF as an input format in v1; output deferred to v1.1.
   **Rationale:** Parsing SARIF is cheap and immediately delivers the eval-first

@@ -19,7 +19,10 @@ execute mode live beyond this plan; when v1 ships they move to ROADMAP.md.
 [pilot/FINDINGS.md](pilot/FINDINGS.md). Repo size and caching are settled. The K
 condition was found unmeetable in Phase 0 and the gate was reworded on 2026-07-26
 to name precision variance, moving the K decision to the end of Phase 1. Phase 1
-in progress.
+in progress: the corpus format, the loader, the enforced answer-key boundary and
+the first fixture (`TS-0001`) are done; what remains is the measurement work —
+locality verification, the K run, and the two pilot-harness blockers those runs
+depend on.
 
 **Budget:** The DESIGN goal of "full sweep under $50" refers to the Phase 6
 publication sweep. Development spend across Phases 0–5 is separate and estimated
@@ -203,14 +206,43 @@ because Phase 1 reuses the pilot harness for locality verification and the K run
       end-to-end check. Network confinement is not implemented: the reviewer's
       toolset has no network tool, so there is nothing to confine until
       `SarifReviewer` shells out in Phase 2, where it belongs.)
-- [ ] Author `TS-0001` end to end, including NOTES.md provenance.
+- [x] Author `TS-0001` end to end, including NOTES.md provenance. (completed
+      2026-07-26 — `corpus/ts/TS-0001-reservation-double-release/`: a 43-file
+      TypeScript inventory service, both trees typecheck clean under `strict` +
+      `noUncheckedIndexedAccess`, patch reverses, loader accepts it. The change
+      under review adds a reservation-expiry sweeper; the seeded defect is that
+      it releases each line's hold itself *and* calls `markExpired`, which
+      releases the same units in its own transaction, so `held` is decremented
+      twice and the ledger oversells. Class `broken-invariant`, severity high.
+      **The claim is `cross_file` and it is `verified: false`** — the evidence
+      lives in `reservation-repo.ts` and `inventory-repo.ts`, neither touched by
+      the diff, and the floor is only the nine-line `registry.ts` plus the new
+      sweeper. Whether that claim survives contact with a reviewer is the
+      measurement task above, not something this entry settles. Three
+      distractors, all deliberately off the defect's lines: a once-sampled batch
+      timestamp, a logged-and-continued failure, and a redundant empty-batch
+      return. `tests/test_corpus_fixtures.py` re-validates the shipped corpus on
+      every run — load, repo size inside the measured 25–50, no VCS history
+      anywhere under a fixture root, every fixture carries a distractor.)
 - [ ] **Treat recall saturation as an authoring failure.** The Phase 0 pilot hit
       100% detection on 3 of 3 defects across 34 runs. If `TS-0001`'s defect is
       also found by every single-shot run, the fixture is too easy and gets
       reworked — a corpus at the recall ceiling cannot answer whether tools help,
       because recall has nowhere to climb. Record the observed detection rate in
-      NOTES.md alongside the provenance.
+      NOTES.md alongside the provenance. (Standard written into
+      `TS-0001/NOTES.md` on 2026-07-26 with the number left explicitly
+      unmeasured; it is filled by the same single-shot runs that settle
+      locality, so this closes with the two measurement tasks above.)
 - [ ] Strip git history from fixture repos as a build step, not a manual habit.
+      (Partly closed 2026-07-26 from the other end: `assert_isolated` refuses a
+      fixture with surviving history at load, and `test_corpus_fixtures.py` fails
+      on a VCS directory anywhere under a fixture root, so shipping history is
+      now caught rather than remembered. `TS-0001` was authored with the git
+      tree kept in a scratch directory outside the fixture, so no history was
+      ever created inside it. What is still missing is the *build step* itself —
+      a documented, repeatable way to regenerate a `change.patch` from a
+      pre/post pair, which today is a sequence of commands in a session
+      transcript.)
 - [ ] Delete `pilot/`.
 
 ### Testing Strategy
@@ -219,6 +251,11 @@ because Phase 1 reuses the pilot harness for locality verification and the K run
   `repo/` cannot read `fixture.yaml`, cannot traverse to the fixture root, and
   finds no git history. This test failing invalidates every number the project
   will ever produce and is treated accordingly.
+- **Corpus regression test:** every fixture that actually ships is re-validated
+  on every test run — it loads, its repo size sits inside the range Phase 0
+  measured, it carries a distractor, and it brings no version-control history.
+  A fixture is written once and then read by every sweep afterwards, so the
+  change most likely to break it is one nobody makes while looking at it.
 
 ### Phase 1 Readiness Gate
 Before Phase 2, these must be true:

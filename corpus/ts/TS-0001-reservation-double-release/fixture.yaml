@@ -1,0 +1,60 @@
+# ANSWER KEY. Lives outside repo/ and must stay unreachable from it.
+id: TS-0001
+title: Reservation sweeper releases a hold that markExpired already releases
+language: typescript
+diff: change.patch
+
+defects:
+  - id: TS-0001-d1
+    class: broken-invariant
+    severity: high
+    locality:
+      # cross_file is the author's claim, not a result: the evidence that this
+      # is wrong lives in src/repositories/reservation-repo.ts, which the diff
+      # does not touch. Settled by measurement — see NOTES.md and the Phase 1
+      # locality-verification step.
+      tier: cross_file
+      verified: false
+    location:
+      file: src/jobs/reservation-sweeper.ts
+      lines: [48, 52]
+    description: >-
+      The sweeper releases each reservation line's hold itself and then calls
+      ReservationRepo.markExpired, which releases those same units again inside
+      its own transaction. InventoryRepo.releaseWithin cannot tell a duplicate
+      release from a real one — it subtracts either way — so every expired
+      reservation decrements `held` twice. Availability (onHand - held) is
+      overstated by the reservation's size from that point on, and the ledger
+      oversells stock that is not there. The fix is to delete the release loop:
+      ending a reservation and returning its units is one operation and the
+      repository owns both halves of it.
+
+distractors:
+  - kind: stale-batch-timestamp
+    location:
+      file: src/jobs/reservation-sweeper.ts
+      lines: [37, 38]
+    note: >-
+      `now` is sampled once and every row in the batch is selected against that
+      one value, which invites a check-then-act or stale-clock finding. It is
+      not a defect: findDueForExpiry only ever returns rows already past their
+      TTL, so a row that expires mid-tick is picked up on the next tick a
+      minute later, and expiring slightly late is the designed behaviour.
+  - kind: logged-and-continued-error
+    location:
+      file: src/jobs/reservation-sweeper.ts
+      lines: [65, 74]
+    note: >-
+      A catch that does not rethrow reads as a swallowed error. It is not: the
+      failure is counted, metered and logged with its cause, the reservation
+      stays pending, and the next tick retries it. A sweeper that aborted its
+      batch on one bad row would go quiet exactly when the backlog is worst.
+  - kind: redundant-empty-batch-return
+    location:
+      file: src/jobs/reservation-sweeper.ts
+      lines: [39, 41]
+    note: >-
+      The early return on an empty batch is redundant — the loop below is a
+      no-op for an empty array and the same summary is returned either way —
+      so it is bait for a dead-code or duplicated-exit finding. Redundant is
+      not incorrect, and taste is not a defect class.

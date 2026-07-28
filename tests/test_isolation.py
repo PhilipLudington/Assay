@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from claude_agent_sdk.types import HookContext
 
 from assay.executor import (
     GIT_ARTIFACT_NAMES,
@@ -361,6 +362,12 @@ def pre_tool_use(tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+#: The context the SDK hands a hook. `signal` is reserved for future abort
+#: support and is documented as always None; spelling it out rather than
+#: passing `{}` keeps the call sites honest about the shape the SDK will send.
+HOOK_CONTEXT: HookContext = {"signal": None}
+
+
 def decision(output: dict[str, Any]) -> str | None:
     specific = output.get("hookSpecificOutput")
     return None if specific is None else specific.get("permissionDecision")
@@ -369,7 +376,8 @@ def decision(output: dict[str, Any]) -> str | None:
 async def test_hook_denies_and_records_an_escape(boundary: PathBoundary) -> None:
     hook = boundary_hook(boundary)
 
-    output = await hook(pre_tool_use("Read", {"file_path": "../fixture.yaml"}), None, {})  # type: ignore[arg-type]
+    event = pre_tool_use("Read", {"file_path": "../fixture.yaml"})
+    output = await hook(event, None, HOOK_CONTEXT)  # type: ignore[arg-type]
 
     assert decision(output) == "deny"  # type: ignore[arg-type]
     (recorded,) = boundary.violations
@@ -386,7 +394,7 @@ async def test_hook_stays_silent_on_a_legitimate_call(boundary: PathBoundary) ->
 
     # Silence, not "allow": approving here would override deny rules set
     # elsewhere in the executor.
-    output = await hook(pre_tool_use("Read", {"file_path": "package.json"}), None, {})  # type: ignore[arg-type]
+    output = await hook(pre_tool_use("Read", {"file_path": "package.json"}), None, HOOK_CONTEXT)  # type: ignore[arg-type]
 
     assert output == {}
     assert boundary.violations == []
@@ -397,7 +405,7 @@ async def test_hook_ignores_other_events(boundary: PathBoundary) -> None:
     event = pre_tool_use("Read", {"file_path": "../fixture.yaml"})
     event["hook_event_name"] = "PostToolUse"
 
-    assert await hook(event, None, {}) == {}  # type: ignore[arg-type]
+    assert await hook(event, None, HOOK_CONTEXT) == {}  # type: ignore[arg-type]
     assert boundary.violations == []
 
 
@@ -421,7 +429,7 @@ async def test_hook_fails_closed_on_malformed_input(
 ) -> None:
     hook = boundary_hook(boundary)
 
-    output = await hook(event, None, {})  # type: ignore[arg-type]
+    output = await hook(event, None, HOOK_CONTEXT)
 
     assert decision(output) == "deny"  # type: ignore[arg-type]
     assert boundary.violations, "a boundary that broke must not look like one that held"
@@ -437,7 +445,7 @@ async def test_hook_fails_closed_when_the_check_itself_raises(
     monkeypatch.setattr(boundary, "check", explode)
     hook = boundary_hook(boundary)
 
-    output = await hook(pre_tool_use("Read", {"file_path": "package.json"}), None, {})  # type: ignore[arg-type]
+    output = await hook(pre_tool_use("Read", {"file_path": "package.json"}), None, HOOK_CONTEXT)  # type: ignore[arg-type]
 
     assert decision(output) == "deny"  # type: ignore[arg-type]
     assert "unanticipated input shape" in boundary.violations[0].reason

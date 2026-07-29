@@ -19,10 +19,11 @@ execute mode live beyond this plan; when v1 ships they move to ROADMAP.md.
 [pilot/FINDINGS.md](pilot/FINDINGS.md). Repo size and caching are settled. The K
 condition was found unmeetable in Phase 0 and the gate was reworded on 2026-07-26
 to name precision variance, moving the K decision to the end of Phase 1. Phase 1
-in progress: the corpus format, the loader, the enforced answer-key boundary and
-the first fixture (`TS-0001`) are done; what remains is the measurement work —
-locality verification, the K run, and the two pilot-harness blockers those runs
-depend on.
+in progress: the corpus format, the loader, the enforced answer-key boundary,
+the first fixture (`TS-0001`) and both pilot-harness blockers are done. What
+remains is the measurement work — the live check that the boundary's deny
+actually fires, then locality verification and the K run, which the gate forbids
+starting until that check passes.
 
 **Budget:** The DESIGN goal of "full sweep under $50" refers to the Phase 6
 publication sweep. Development spend across Phases 0–5 is separate and estimated
@@ -169,15 +170,42 @@ because Phase 1 reuses the pilot harness for locality verification and the K run
       runtime rests on the SDK's own documentation, not on an observed refusal.
       The first confined run must include a deliberate bait call and confirm it
       is refused — see the Phase 1 gate.
-- [ ] **Surface `parse_error` in scoring.** Both runners record `parse_error` and
-      fall back to an empty finding list, but `analyze.py` never reads the field —
-      so a structured-output parse failure is statistically identical to "the
-      reviewer found nothing". Incidence in the pilot was 0/34, so FINDINGS is
-      unaffected, but the Phase 4 scorer must not reproduce the pattern.
-- [ ] **Give `run_singleshot.py` the retry/record wrapper `run_agentic.py` has.**
-      It has no `try`/`except` at all, so one transient API error aborts the batch
-      and silently skips every remaining run — the exact failure fixed for the
-      agentic path mid-pilot and never backported.
+- [x] **Surface `parse_error` in scoring.** (completed 2026-07-29) Both runners
+      recorded `parse_error` and fell back to an empty finding list, but
+      `analyze.py` never read the field — so a structured-output parse failure was
+      statistically identical to "the reviewer found nothing". Incidence in the
+      pilot was 0/34, so FINDINGS is unaffected; the control was absent, not
+      merely unneeded.
+      **Closed by** a three-tier split in `analyze.py:partition` — `failed`
+      (produced nothing, dropped everywhere) / unparseable / `scored`. The middle
+      tier is the point: an unparseable run still navigated the repo and still
+      cost money, so it stays in the navigation, caching and cost tables, but its
+      finding list is *unknown* rather than empty, so it leaves detection and
+      variance. Scoring it as a miss would depress a rate; dropping it from cost
+      would understate a sweep. The Q1 table gained a `pe` column and the run
+      accounting names the affected groups, so a group whose effective n has
+      shrunk below the K it was run at cannot look fully powered.
+      One definition of "the findings did not come back" now lives in
+      `common.extract_findings`, shared by both runners and the analyzer, rather
+      than three local `try` blocks — the bug was precisely that the writers and
+      the reader disagreed about a field. It also closed a quieter hole the same
+      shape: `structured.get("findings", [])` made a schema violation
+      indistinguishable from a clean empty review, in both runners.
+      Verified end to end — a synthetic parse-error transcript held detection at
+      1.00 instead of dropping it to 0.91, stayed in the cost mean, and was
+      reported; the analyzer reproduces all 34 pilot runs unchanged otherwise.
+- [x] **Give `run_singleshot.py` the retry/record wrapper `run_agentic.py` has.**
+      (completed 2026-07-29) It had no `try`/`except` at all, so one transient API
+      error aborted the batch and silently skipped every remaining run — the exact
+      failure fixed for the agentic path mid-pilot and never backported.
+      **Closed by** `run_singleshot.run_with_retries` plus a per-request
+      `--run-timeout`, so a stall costs one run rather than the batch. A run that
+      exhausts its retries is *recorded* with `failed: True`, not skipped: a gap
+      in the transcripts would let `analyze.py` report a smaller n as if it were
+      the intended K. Extracted as a named function rather than an inline `try`
+      because the defect was an untested failure path, and an untested failure
+      path is what this blocker is about — 6 cases now cover retry-then-succeed,
+      exhaustion, zero-retries, and the batch surviving a dead run.
 - [x] Write the closed defect-class taxonomy for TypeScript; document why each
       class is in it. (completed 2026-07-26 — 7 classes with per-class rationale
       and an explicit distinguished-from, plus 5 recorded exclusions)
@@ -275,9 +303,10 @@ Before Phase 2, these must be true:
       outside `repo/` and a prompt inviting the reviewer to read it; the gate
       clears when the transcript shows the call refused and recorded under
       `boundary_violations`. Until then the boundary is argued, not observed.
-- [ ] The remaining two QA blockers above are closed. No measurement run that
+- [x] The remaining two QA blockers above are closed. (2026-07-29 — both, with
+      the failure paths tested rather than assumed.) No measurement run that
       feeds a recorded decision happens until the answer-key boundary is both
-      enforced (done) and observed to fire (above).
+      enforced (done) and observed to fire (above, still open).
 
 ---
 

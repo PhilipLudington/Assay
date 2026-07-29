@@ -240,6 +240,46 @@ def review_task(fixture: Fixture) -> str:
     )
 
 
+# --- structured-output parsing ----------------------------------------------
+#
+# One definition of "the findings did not come back", shared by both runners
+# and by analyze.py. It is a shared function rather than three local `try`
+# blocks because the bug this closes was exactly that: the runners recorded a
+# `parse_error` field and the analyzer did not know it existed, so a parse
+# failure scored identically to a clean review that found nothing.
+
+
+def extract_findings(payload: Any) -> tuple[list[dict[str, Any]], str | None]:
+    """Pulls the findings list out of a structured-output payload.
+
+    Returns `(findings, parse_error)`. On any failure the list is empty **and**
+    `parse_error` is set. A caller must never read the empty list without also
+    reading the second value: an empty list with `parse_error is None` is a
+    real and sometimes correct review result, and an empty list with a
+    `parse_error` is not a result at all.
+    """
+    if payload is None:
+        return [], "no structured output on the response"
+    if not isinstance(payload, dict):
+        return [], f"structured output is {type(payload).__name__}, not an object"
+    if "findings" not in payload:
+        # The schema requires this key, so its absence means the constraint did
+        # not hold. Silently defaulting to [] here is the whole failure mode.
+        return [], "structured output has no 'findings' key"
+    findings = payload["findings"]
+    if not isinstance(findings, list):
+        return [], f"'findings' is {type(findings).__name__}, not a list"
+    malformed = [i for i, item in enumerate(findings) if not isinstance(item, dict)]
+    if malformed:
+        return [], f"findings at index {malformed} are not objects"
+    return findings, None
+
+
+def parse_failed(record: dict[str, Any]) -> bool:
+    """True when a record's finding list is *unknown* rather than empty."""
+    return bool(record.get("parse_error"))
+
+
 # --- transcript io ----------------------------------------------------------
 
 

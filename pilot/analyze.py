@@ -28,7 +28,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from common import OUT_DIR, read_records
+from common import OUT_DIR, parse_failed, read_records
 
 # Ground truth, mirroring the ANSWER.md files. Deliberately lives here and not
 # in common.py: the scripts that build reviewer prompts import common.py, and
@@ -95,6 +95,23 @@ def emit_label_template(records: list[dict], window: int) -> Path:
     path = OUT_DIR / "labels.template.json"
     path.write_text(json.dumps(template, indent=2, ensure_ascii=False), encoding="utf-8")
     return path
+
+
+def partition(all_records: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Splits transcripts into `(billed, scored)`.
+
+    `billed` drops runs that failed outright — they produced nothing at all.
+    `scored` additionally drops runs whose structured output would not parse:
+    those navigated the repo and cost money, so they stay in the cost, caching
+    and navigation tables, but their finding list is unknown and must not be
+    read as an empty one.
+
+    Lives here as a named function, not inline in `main`, so the exclusion can
+    be tested rather than asserted — see tests/test_pilot_scoring.py.
+    """
+    billed = [r for r in all_records if not r.get("failed")]
+    scored = [r for r in billed if not parse_failed(r)]
+    return billed, scored
 
 
 def run_key(record: dict) -> str:
@@ -172,22 +189,37 @@ def main() -> int:
     args = parse_args()
     rng = random.Random(args.seed)
     all_records = list(read_records())
-    records = [r for r in all_records if not r.get("failed")]
-    failed = len(all_records) - len(records)
-    if failed:
-        print(f"note: {failed} run(s) failed and are excluded from every table below")
-    if not records:
+    # Three tiers, not two.
+    #
+    # A run that failed outright produced nothing and is gone entirely. A run
+    # whose structured output would not parse is different: it still navigated
+    # the repo and it still cost money, so it belongs in the navigation,
+    # caching and cost tables. But its finding list is *unknown*, not empty —
+    # scoring it as "found nothing" would silently depress detection, and
+    # scoring it as a hit would invent a result. It leaves Q1 and only Q1.
+    #
+    # This is the exclusion the pilot did not make: both runners recorded
+    # `parse_error` and this analyzer never read the field, so a parse failure
+    # and a clean empty review were the same number. Incidence was 0/34, so no
+    # published figure moved — but the control was absent, not merely unneeded.
+    billed, scored = partition(all_records)
+    failed = len(all_records) - len(billed)
+    unparsed = len(billed) - len(scored)
+
+    if not billed:
         print(f"no transcripts in {OUT_DIR}. Run run_singleshot.py / run_agentic.py first.")
         return 1
 
     if args.emit_labels:
-        path = emit_label_template(records, args.window)
-        print(f"wrote {path} — {len(records)} runs to label")
+        path = emit_label_template(scored, args.window)
+        print(f"wrote {path} — {len(scored)} runs to label")
+        if unparsed:
+            print(f"({unparsed} unparseable run(s) omitted — there is nothing to label)")
         return 0
 
     labels = load_labels()
     label_hits = 0
-    for record in records:
+    for record in scored:
         key = run_key(record)
         if key in labels:
             record["_detected"] = bool(labels[key])
@@ -195,20 +227,52 @@ def main() -> int:
         else:
             record["_detected"] = detected(record, args.window)
 
-    print(f"{len(records)} runs across {len({r['fixture'] for r in records})} fixtures")
+    heading("Run accounting")
+    print(f"{len(all_records):>4} run(s) on disk")
+    print(f"{failed:>4} failed outright — excluded from every table")
+    print(f"{unparsed:>4} returned unparseable output — kept in Q2/Q3/Q4, excluded from Q1")
+    print(f"{len(scored):>4} scored across {len({r['fixture'] for r in scored})} fixtures")
     print(
-        f"detection source: {label_hits} hand-labelled, "
-        f"{len(records) - label_hits} by proximity heuristic (±{args.window} lines)"
+        f"\ndetection source: {label_hits} hand-labelled, "
+        f"{len(scored) - label_hits} by proximity heuristic (±{args.window} lines)"
     )
 
     groups: dict[tuple[str, str, str], list[dict]] = defaultdict(list)
-    for record in records:
+    for record in scored:
         groups[(record["fixture"], record["mode"], record["reviewer"])].append(record)
+
+    # Per-group parse failures, so a group whose effective n has shrunk below
+    # the K it was run at cannot look fully powered in the Q1 table.
+    unparsed_by_group: dict[tuple[str, str, str], int] = defaultdict(int)
+    for record in billed:
+        if parse_failed(record):
+            unparsed_by_group[
+                (record["fixture"], record["mode"], record["reviewer"])
+            ] += 1
+
+    if unparsed:
+        print(
+            "\n⚠ An unparseable run is not a run that found nothing. Excluding it\n"
+            "  shrinks n below the K these groups were run at; counting it would\n"
+            "  invent a measurement. Affected groups:"
+        )
+        for (fixture, mode, reviewer), count in sorted(unparsed_by_group.items()):
+            kept = len(groups.get((fixture, mode, reviewer), []))
+            print(f"    {fixture}/{mode}/{reviewer}: {count} dropped, n={kept} remaining")
+
+    if not scored:
+        print("\nno scoreable runs — every run either failed or would not parse.")
+        print("Q1 is skipped; the cost and navigation tables below still apply.")
 
     # --- Q1: variance and the choice of K ---------------------------------
     heading("Q1  Run-to-run variance → K")
-    print(f"{'fixture/mode/reviewer':38} {'n':>3} {'detect':>7} {'findings':>16} {'Jaccard':>8}")
+    print("'pe' is runs dropped for unparseable output; n is what remains.\n")
+    print(
+        f"{'fixture/mode/reviewer':38} {'n':>3} {'pe':>3} {'detect':>7} "
+        f"{'findings':>16} {'Jaccard':>8}"
+    )
     for (fixture, mode, reviewer), runs in sorted(groups.items()):
+        dropped = unparsed_by_group.get((fixture, mode, reviewer), 0)
         hits = [1 if r["_detected"] else 0 for r in runs]
         counts = [len(r.get("findings", [])) for r in runs]
         keysets = [finding_keys(r) for r in runs]
@@ -219,7 +283,7 @@ def main() -> int:
         ]
         spread = f"{statistics.mean(counts):.1f}±{statistics.pstdev(counts):.1f}"
         print(
-            f"{fixture + '/' + mode + '/' + reviewer:38} {len(runs):>3} "
+            f"{fixture + '/' + mode + '/' + reviewer:38} {len(runs):>3} {dropped:>3} "
             f"{sum(hits) / len(hits):>7.2f} {spread:>16} "
             f"{(statistics.mean(pairs) if pairs else float('nan')):>8.2f}"
         )
@@ -240,7 +304,10 @@ def main() -> int:
 
     # --- Q2: navigation ----------------------------------------------------
     heading("Q2  Navigation behaviour (agentic runs only)")
-    agentic = [r for r in records if r["mode"] == "read_tools"]
+    # `billed`, not `scored`: tool calls are observed directly from the
+    # transcript, so a run whose final payload would not parse still navigated
+    # and still counts here.
+    agentic = [r for r in billed if r["mode"] == "read_tools"]
     if not agentic:
         print("no agentic transcripts yet.")
     else:
@@ -290,8 +357,13 @@ def main() -> int:
 
     # --- Q3: caching -------------------------------------------------------
     heading("Q3  Prompt caching")
+    # Tokens were read and written whatever the payload looked like coming back.
+    billed_groups: dict[tuple[str, str, str], list[dict]] = defaultdict(list)
+    for record in billed:
+        billed_groups[(record["fixture"], record["mode"], record["reviewer"])].append(record)
+
     print(f"{'fixture/mode/reviewer':38} {'run':>4} {'cache_write':>12} {'cache_read':>11} {'input':>9}")
-    for (fixture, mode, reviewer), runs in sorted(groups.items()):
+    for (fixture, mode, reviewer), runs in sorted(billed_groups.items()):
         for record in sorted(runs, key=lambda r: r.get("run_index", 0)):
             usage = record.get("usage", {})
             print(
@@ -313,13 +385,15 @@ def main() -> int:
     print(f"{'fixture':10} {'mode':12} {'src files':>10} {'mean $/run':>12} {'mean turns':>11}")
     cost_by: dict[tuple[str, str], list[float]] = defaultdict(list)
     turns_by: dict[tuple[str, str], list[int]] = defaultdict(list)
-    for record in records:
+    # An unparseable run was still paid for. Dropping it here would understate
+    # what a sweep actually costs, which is the opposite of the Q1 correction.
+    for record in billed:
         key = (record["fixture"], record["mode"])
         if record.get("cost_usd") is not None:
             cost_by[key].append(record["cost_usd"])
         turns_by[key].append(record.get("num_turns", 1))
     for (fixture, mode), costs in sorted(cost_by.items()):
-        source_count = next(r["source_file_count"] for r in records if r["fixture"] == fixture)
+        source_count = next(r["source_file_count"] for r in billed if r["fixture"] == fixture)
         print(
             f"{fixture:10} {mode:12} {source_count:>10} {statistics.mean(costs):>12.4f} "
             f"{statistics.mean(turns_by[(fixture, mode)]):>11.1f}"
@@ -344,7 +418,7 @@ def main() -> int:
             print(f"{fixture + ' (incomplete)':26} " + "  both modes not measured — cannot price")
             continue
         unit = modes["single_shot"] + modes["read_tools"]
-        source_count = next(r["source_file_count"] for r in records if r["fixture"] == fixture)
+        source_count = next(r["source_file_count"] for r in billed if r["fixture"] == fixture)
         cells = "".join(f"{0.5 * 15 * k * unit:>11.2f}" for k in (3, 5, 7, 10))
         print(f"{f'{fixture} ({source_count} files, batch)':26} {unit:>12.4f} {cells}")
         cells = "".join(f"{15 * k * unit:>11.2f}" for k in (3, 5, 7, 10))

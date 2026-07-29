@@ -50,6 +50,7 @@ from common import (
     FINDING_SCHEMA,
     REVIEWERS,
     append_record,
+    extract_findings,
     load_fixture,
     review_task,
     transcript_path,
@@ -153,8 +154,7 @@ async def one_run(fixture, reviewer: str, args) -> dict:
     for call in tool_calls:
         call["result"] = tool_results.get(call["id"])
 
-    structured = result.structured_output or {}
-    findings = structured.get("findings", []) if isinstance(structured, dict) else []
+    findings, parse_error = extract_findings(result.structured_output)
 
     model_usage = {
         name: dict(usage) for name, usage in (result.model_usage or {}).items()
@@ -170,7 +170,7 @@ async def one_run(fixture, reviewer: str, args) -> dict:
         "source_file_count": len(fixture.source_files()),
         "touched_files": fixture.touched_files(),
         "findings": findings,
-        "parse_error": None if structured else "no structured_output on ResultMessage",
+        "parse_error": parse_error,
         # Persisted, not just blocked: an attempted escape is evidence about
         # the fixture even when the boundary holds.
         "boundary_violations": boundary.records(),
@@ -273,6 +273,7 @@ async def main_async() -> int:
                 f"cache_read={record['usage']['cache_read_input_tokens']:>7}  "
                 f"${record['cost_usd'] or 0:.4f}"
                 + (f"  ⚠ {blocked} blocked" if blocked else "")
+                + (f"  PARSE ERROR {record['parse_error']}" if record["parse_error"] else "")
             )
 
     print(f"total spend this invocation: ${total_cost:.4f}")

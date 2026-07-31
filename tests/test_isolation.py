@@ -11,9 +11,12 @@ than discovering it in a published result.
 
 Scope note, stated plainly because the gap matters: these tests prove the
 boundary's *logic*. That the Agent SDK honours a `PreToolUse` deny under
-`permission_mode="bypassPermissions"` is asserted from the SDK's own
-documentation (see `assay.executor.hooks`) and is not exercised here — that
-needs a live run, which lands with the first confined measurement run.
+`permission_mode="bypassPermissions"` cannot be settled here, because it is a
+dependency's behaviour rather than this repository's. It was **observed** on
+2026-07-30 by `assay.executor.probe` — a live confined run on `TS-0001` with
+bait planted outside `repo/` — and the transcript is committed under
+`results/boundary-probe/`. Re-run the probe when `claude-agent-sdk` is upgraded;
+nothing in this file would notice that regression.
 """
 
 from __future__ import annotations
@@ -26,9 +29,11 @@ import pytest
 from claude_agent_sdk.types import HookContext
 
 from assay.executor import (
+    CONTROL_PLANE_TOOLS,
     GIT_ARTIFACT_NAMES,
     MAX_RECORDED_VALUE_CHARS,
     MAX_RECORDED_VIOLATIONS,
+    PATH_FIELDS,
     BoundaryViolation,
     FixtureNotIsolated,
     PathBoundary,
@@ -222,6 +227,60 @@ def test_tools_outside_the_allowlist_are_denied(
 
     assert violation is not None
     assert "allowlist" in violation.reason
+
+
+def test_the_answer_channel_is_not_denied(boundary: PathBoundary) -> None:
+    """Default-deny must confine the reviewer, not gag it.
+
+    `StructuredOutput` is how the CLI returns a `--json-schema` result. The
+    2026-07-30 live probe found this rule denying it: two blocked calls, zero
+    findings, and a `parse_error` on every agentic run. The boundary was doing
+    its job on a tool that reads nothing, and the cost was the measurement.
+    """
+    assert boundary.check("StructuredOutput", {"findings": []}) is None
+
+
+def test_the_answer_channel_may_cite_files_without_being_denied(
+    boundary: PathBoundary,
+) -> None:
+    """A finding's `file` is a claim about a file, not an access to one.
+
+    Path-checking this tool's input would be the obvious "safer" choice and is
+    wrong: a reviewer reporting a defect in a file it legitimately read would
+    have its answer refused for looking like an escape.
+    """
+    payload = {
+        "findings": [
+            {"file": "src/jobs/reservation-sweeper.ts", "start_line": 48, "end_line": 52},
+            {"file": "../somewhere/odd.ts", "start_line": 1, "end_line": 2},
+        ]
+    }
+
+    assert boundary.check("StructuredOutput", payload) is None
+
+
+def test_control_plane_allowlist_stays_narrow() -> None:
+    """The exception is a named list, not a category that can quietly grow.
+
+    Every entry is a tool asserted to read nothing. If this fails, someone has
+    widened the one hole in default-deny and owes the reason in the constant's
+    docstring.
+    """
+    assert set(CONTROL_PLANE_TOOLS) == {"StructuredOutput"}
+    assert not set(CONTROL_PLANE_TOOLS) & set(PATH_FIELDS)
+
+
+def test_a_neighbouring_harness_tool_is_still_denied(boundary: PathBoundary) -> None:
+    """`ReportFindings` is Claude Code's own review tool, not our answer channel.
+
+    The probe saw the reviewer reach for it. It is not part of the protocol this
+    harness scores, so it stays denied — the allowlist is one name, not a family
+    of things that sound like output.
+    """
+    violation = boundary.check("ReportFindings", {"findings": []})
+
+    assert violation is not None
+    assert "control-plane" in violation.reason
 
 
 def test_non_string_path_is_denied(boundary: PathBoundary) -> None:

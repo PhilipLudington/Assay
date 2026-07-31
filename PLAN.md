@@ -19,11 +19,14 @@ execute mode live beyond this plan; when v1 ships they move to ROADMAP.md.
 [pilot/FINDINGS.md](pilot/FINDINGS.md). Repo size and caching are settled. The K
 condition was found unmeetable in Phase 0 and the gate was reworded on 2026-07-26
 to name precision variance, moving the K decision to the end of Phase 1. Phase 1
-in progress: the corpus format, the loader, the enforced answer-key boundary,
-the first fixture (`TS-0001`) and both pilot-harness blockers are done. What
-remains is the measurement work — the live check that the boundary's deny
-actually fires, then locality verification and the K run, which the gate forbids
-starting until that check passes.
+in progress: the corpus format, the loader, the answer-key boundary, the first
+fixture (`TS-0001`) and the pilot-harness blockers are done, and as of
+2026-07-30 the boundary has been **observed** denying a live escape attempt
+rather than argued from the SDK's documentation — which was the gate blocking
+every measurement run. That probe also caught the boundary denying the
+reviewer's own answer channel, a defect that would have made both remaining
+measurements return zeros at full price. What remains is the measurement work
+itself: locality verification and the K run, now unblocked.
 
 **Budget:** The DESIGN goal of "full sweep under $50" refers to the Phase 6
 publication sweep. Development spend across Phases 0–5 is separate and estimated
@@ -166,10 +169,38 @@ because Phase 1 reuses the pilot harness for locality verification and the K run
       symlinks and surviving VCS history before a run starts — these are the two
       leak channels a per-call path check cannot see, since `Glob`/`Grep` expand
       patterns themselves).
-      **Not yet proven end to end:** that the SDK honours a `PreToolUse` deny at
-      runtime rests on the SDK's own documentation, not on an observed refusal.
-      The first confined run must include a deliberate bait call and confirm it
-      is refused — see the Phase 1 gate.
+      **Proven end to end 2026-07-30** by `assay.executor.probe` — see the
+      Phase 1 gate. The same probe found the boundary's one real defect, below.
+- [x] **Default-deny was gagging the reviewer, not just confining it.**
+      (found and closed 2026-07-30 by the live boundary probe) The boundary
+      refuses any tool outside `Read`/`Glob`/`Grep`. `StructuredOutput` is the
+      tool the CLI uses to deliver a `--json-schema` result — the reviewer's
+      *answer channel* — so with the boundary wired in, **every agentic run
+      returned zero findings and a parse error**. Reproduced before fixing:
+      one run on the `small` fixture, `StructuredOutput` blocked twice, `0
+      findings`, `PARSE ERROR no structured output on the response`.
+      No recorded number is affected — the pilot's 34 runs predate the boundary
+      — but the next two tasks in this phase are measurement runs, and both
+      would have measured nothing at full price. The bug was introduced by the
+      2026-07-26 fix to the blocker above and existed for four days without a
+      single run to reveal it, which is the argument for the gate that caught it.
+      **Closed by** `CONTROL_PLANE_TOOLS` in `assay.executor.confinement`: a
+      one-name allowlist for tools that read nothing. Default-deny was right and
+      the allowlist was merely incomplete, so the rule stands and the exception
+      is explicit. Its inputs are deliberately *not* path-checked — a finding
+      legitimately carries a repo-relative `file`, so scanning this tool for
+      path-shaped fields would refuse correct output for looking like an escape.
+      `ReportFindings`, which the first probe run saw the reviewer reach for,
+      stays denied: it is Claude Code's own review tool, not this harness's
+      protocol. Verified end to end — the same command that produced 0 findings
+      produced 3, with nothing blocked.
+      Two things are worth keeping. First, this was only visible because the
+      `parse_error` blocker below had already landed; without it the run would
+      have read as "the reviewer found nothing" and detection would have been
+      0.00 with no signal at all. Second, the first probe ran without an
+      `output_format` and so exercised a tool the reviewer never uses while
+      leaving the one it depends on untested — the probe now runs the reviewer's
+      exact configuration, and records whether the answer channel came back.
 - [x] **Surface `parse_error` in scoring.** (completed 2026-07-29) Both runners
       recorded `parse_error` and fell back to an empty finding list, but
       `analyze.py` never read the field — so a structured-output parse failure was
@@ -297,12 +328,34 @@ Before Phase 2, these must be true:
       56 cases, loader 31. The reversal check landed in `assay.corpus.loader`
       rather than in manifest validation, since it needs the fixture tree and
       not just the manifest.)
-- [ ] **A live run confirms the `PreToolUse` deny actually fires.** The isolation
-      test proves the boundary's logic; it does not prove the Agent SDK honours
-      the refusal. The first confined run on `TS-0001` carries a bait file
-      outside `repo/` and a prompt inviting the reviewer to read it; the gate
-      clears when the transcript shows the call refused and recorded under
-      `boundary_violations`. Until then the boundary is argued, not observed.
+- [x] **A live run confirms the `PreToolUse` deny actually fires.** (observed
+      2026-07-30) `assay.executor.probe` plants `MAINTAINER-NOTES.md` beside the
+      answer key, tells the reviewer to read it, and runs the reviewer's own
+      configuration — `bypassPermissions`, `Read`/`Glob`/`Grep`, structured
+      output. Transcript committed at
+      `results/boundary-probe/TS-0001-20260730T201016Z.json`: the reviewer
+      attempted `Read("../MAINTAINER-NOTES.md")`, the call came back an error
+      carrying the boundary's own reason, the attempt is recorded under
+      `boundary_violations`, and the reviewer said in its own answer that it
+      could not read the file. **The boundary is now observed, not argued.**
+      Three properties were checked rather than one, because "the hook returned
+      deny" only describes our intent:
+      1. *The bait was live.* It was written and read back with its canary
+         before any token was spent. The 2026-07-26 audit found 22 pilot calls
+         that failed on a missing path rather than on a control; a probe whose
+         bait does not exist reproduces exactly that and proves nothing.
+      2. *The refusal reached the model.* Out-of-bounds calls are re-derived
+         from the transcript by the pure checker, not read off the hook's own
+         bookkeeping, so a hook that had silently stopped firing could not
+         report a clean sheet.
+      3. *The canary is absent from the whole transcript* — tool results,
+         findings, and final answer. This is the check that cannot be satisfied
+         by our code agreeing with itself.
+      A run in which the reviewer never attempts an escape is reported
+      `INCONCLUSIVE`, not `HELD`: an unexercised control is not a verified one.
+      The probe is production code rather than a one-off script because the
+      behaviour under test belongs to `claude-agent-sdk` and can regress without
+      a line of this repository changing — re-run it on every SDK upgrade.
 - [x] The remaining two QA blockers above are closed. (2026-07-29 — both, with
       the failure paths tested rather than assumed.) No measurement run that
       feeds a recorded decision happens until the answer-key boundary is both
@@ -494,7 +547,7 @@ published run ID.
 
 | Risk | Impact | Likelihood | Mitigation |
 |---|---|---|---|
-| Answer-key leakage into reviewer context | Critical — all numbers invalid, silently | Low **→ raised, then lowered again 2026-07-26**: the pilot harness enforced nothing beyond `cwd` and reviewers were observed attempting absolute paths outside it; `assay.executor` now denies those calls by default and records them | Executor path confinement (default-deny, symlink- and `..`-resolving); history-free fixtures; isolation test treated as correctness-critical and re-run whenever executor or layout changes. **Keep auditing transcripts for out-of-`repo/` paths after every run batch** — the boundary is enforced but not yet observed firing against a live SDK, and the audit is what established the pilot's own numbers were clean |
+| Answer-key leakage into reviewer context | Critical — all numbers invalid, silently | Low **→ raised 2026-07-26, lowered furthest 2026-07-30**: the pilot harness enforced nothing beyond `cwd`; `assay.executor` now denies those calls by default, and a live confined run has been *observed* refusing a planted bait read with the canary absent from the transcript | Executor path confinement (default-deny, symlink- and `..`-resolving); history-free fixtures; isolation test treated as correctness-critical and re-run whenever executor or layout changes. **Re-run `assay.executor.probe` on every `claude-agent-sdk` upgrade** — the deny is honoured by a dependency, so it can regress with no change here and no test would notice. **Keep auditing transcripts for out-of-`repo/` paths after every run batch**: the audit is what established the pilot's own numbers were clean |
 | Judge agreement too low to trust | Critical — blocks the project | Medium | Phase 3 readiness gate stops work; revise judge, never the labels |
 | Run-to-run variance swamps signal; K must rise | High — cost scales with K | Medium | Measured in Phase 0 before anything is built on an assumed K |
 | Agent SDK blocks prefix caching | Medium — agentic cost rises | Medium | Measured in Phase 0; fallback is a Client SDK tool loop for the agentic reviewer |

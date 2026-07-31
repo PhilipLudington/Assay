@@ -9,6 +9,7 @@ SDK, and nothing that only needs the boundary's logic should pay for that.
 """
 
 from assay.executor.confinement import (
+    CONTROL_PLANE_TOOLS,
     GIT_ARTIFACT_NAMES,
     MAX_RECORDED_VALUE_CHARS,
     MAX_RECORDED_VIOLATIONS,
@@ -22,6 +23,7 @@ from assay.executor.confinement import (
 )
 
 __all__ = [
+    "CONTROL_PLANE_TOOLS",
     "GIT_ARTIFACT_NAMES",
     "MAX_RECORDED_VALUE_CHARS",
     "MAX_RECORDED_VIOLATIONS",

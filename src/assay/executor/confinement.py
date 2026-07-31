@@ -22,6 +22,12 @@ check the ones we recognise — means the next tool added to the reviewer's
 toolset silently bypasses the boundary. A refusal is a loud, cheap failure; a
 bypass is a silent, expensive one.
 
+The one exception is `CONTROL_PLANE_TOOLS`, and it was bought with a real
+failure: the 2026-07-30 live probe found `StructuredOutput` — the channel the
+CLI uses to deliver a `--json-schema` result — being denied by this very rule.
+Every agentic run returned zero findings and a parse error. Default-deny was
+right and the allowlist was simply incomplete; see the constant below.
+
 **Resolution before comparison.** Every candidate path is resolved (symlinks
 followed, `..` collapsed) and then compared against the resolved root. String
 prefix matching would pass `repo/../fixture.yaml` and any symlink pointing out
@@ -55,6 +61,27 @@ PATH_FIELDS: dict[str, tuple[str, ...]] = {
     "Glob": ("pattern", "path"),
     "Grep": ("path", "glob"),
 }
+
+#: Tools that belong to the harness's own control plane rather than to the
+#: reviewer's navigation, and are therefore allowed without a path check.
+#:
+#: `StructuredOutput` is the reviewer's *answer channel*: setting
+#: `output_format={"type": "json_schema", ...}` makes the SDK pass
+#: `--json-schema` to the CLI, which collects the result through a tool call of
+#: this name. Denying it does not confine the reviewer — it gags it. The
+#: 2026-07-30 boundary probe caught exactly that: two denied `StructuredOutput`
+#: calls, zero findings, and a `parse_error` on every agentic run.
+#:
+#: Allowing it opens no read channel. The direction of travel is model → harness,
+#: and the payload is a claim the reviewer is making, not a file it is opening.
+#: Its inputs are deliberately **not** path-checked, and that is not laxity: a
+#: finding legitimately carries a repo-relative `file`, so scanning this tool for
+#: path-shaped fields would reject correct output for looking like an escape.
+#:
+#: The list is a name allowlist and stays short. A tool earns a place here only
+#: when it cannot read anything — which is a claim to re-check whenever the CLI
+#: changes, since the behaviour belongs to a dependency.
+CONTROL_PLANE_TOOLS = frozenset({"StructuredOutput"})
 
 #: Cap on violations retained per run. A reviewer that loops on a denied path
 #: must not be able to inflate one transcript record without limit; the count
@@ -124,6 +151,9 @@ class PathBoundary:
         exception out of here as a denial anyway (see `assay.executor.hooks`),
         but it should not have to.
         """
+        if tool_name in CONTROL_PLANE_TOOLS:
+            return None
+
         fields = PATH_FIELDS.get(tool_name)
         if fields is None:
             return BoundaryViolation(
@@ -132,7 +162,8 @@ class PathBoundary:
                 value=None,
                 reason=(
                     "tool is not on the read-only allowlist "
-                    f"({', '.join(sorted(PATH_FIELDS))})"
+                    f"({', '.join(sorted(PATH_FIELDS))}) nor a control-plane tool "
+                    f"({', '.join(sorted(CONTROL_PLANE_TOOLS))})"
                 ),
             )
 

@@ -48,6 +48,7 @@ from claude_agent_sdk import (
     HookJSONOutput,
     HookMatcher,
 )
+from claude_agent_sdk.types import HookEvent
 
 from assay.executor.confinement import BoundaryViolation, PathBoundary, assert_isolated
 
@@ -121,7 +122,7 @@ def boundary_hook(boundary: PathBoundary) -> HookCallback:
     return hook
 
 
-def confinement_hooks(repo: Path) -> tuple[PathBoundary, dict[str, list[HookMatcher]]]:
+def confinement_hooks(repo: Path) -> tuple[PathBoundary, dict[HookEvent, list[HookMatcher]]]:
     """Returns the boundary and the `hooks=` mapping to hand `ClaudeAgentOptions`.
 
     Raises `FixtureNotIsolated` if `repo` carries version-control history or
@@ -135,5 +136,7 @@ def confinement_hooks(repo: Path) -> tuple[PathBoundary, dict[str, list[HookMatc
     """
     assert_isolated(repo)
     boundary = PathBoundary(repo)
-    matchers = {"PreToolUse": [HookMatcher(matcher=None, hooks=[boundary_hook(boundary)])]}
+    matchers: dict[HookEvent, list[HookMatcher]] = {
+        "PreToolUse": [HookMatcher(matcher=None, hooks=[boundary_hook(boundary)])]
+    }
     return boundary, matchers

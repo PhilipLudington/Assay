@@ -9,12 +9,20 @@ defects:
     class: broken-invariant
     severity: high
     locality:
-      # cross_file is the author's claim, not a result: the evidence that this
-      # is wrong lives in src/repositories/reservation-repo.ts, which the diff
-      # does not touch. Settled by measurement — see NOTES.md and the Phase 1
-      # locality-verification step.
+      # Measured, not claimed. The author's argument was that the evidence
+      # lives in src/repositories/reservation-repo.ts, which the diff does not
+      # touch; ten no-tools runs agreed by failing to find it.
       tier: cross_file
-      verified: false
+      verified: true
+      evidence: >-
+        0/10 single-shot runs found it (2026-07-31, claude-opus-5, effort=high,
+        floor context + no tools). Detection was hand-labelled: the proximity
+        matcher scored 10/10 and every one of those matches was a false
+        positive — the runs converged on ordering, retry-idempotency and
+        summary-accounting concerns sitting on the defect's own lines, and none
+        identified that markExpired releases the same units in its own
+        transaction. Transcript, labels and the per-run reasoning are under
+        results/locality/.
     location:
       file: src/jobs/reservation-sweeper.ts
       lines: [48, 52]

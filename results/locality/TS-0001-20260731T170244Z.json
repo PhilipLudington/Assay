@@ -1,0 +1,454 @@
+{
+  "measurement": "locality-verification",
+  "fixture": "TS-0001",
+  "fixture_root": "corpus/ts/TS-0001-reservation-double-release",
+  "model": "claude-opus-5",
+  "effort": "high",
+  "max_tokens": 16000,
+  "reviewer": "single-shot correctness, floor context, no tools",
+  "prompt_sha256": "f2b24e4a30596516",
+  "stamp": "20260731T170244Z",
+  "runs": [
+    {
+      "mode": "single_shot",
+      "fixture": "TS-0001",
+      "model": "claude-opus-5",
+      "stop_reason": "end_turn",
+      "findings": [
+        {
+          "file": "src/jobs/reservation-sweeper.ts",
+          "start_line": 52,
+          "end_line": 60,
+          "claimed_class": "Race condition / data integrity (release before state transition)",
+          "severity": "high",
+          "confidence": 0.85,
+          "message": "Inventory is released before the reservation state transition is attempted. If `markExpired` returns null because the reservation was confirmed (or otherwise settled) concurrently between `findDueForExpiry` and `markExpired`, the units have already been given back to available stock while the reservation is still live/confirmed. The code just bumps `sweep.already_settled` and continues, leaving inventory over-counted and allowing the same units to be sold twice. The transition should be attempted first (compare-and-set on the pending state) and the release performed only if it succeeded, ideally in the same transaction."
+        },
+        {
+          "file": "src/jobs/reservation-sweeper.ts",
+          "start_line": 53,
+          "end_line": 55,
+          "claimed_class": "Non-idempotent retry / double release",
+          "severity": "high",
+          "confidence": 0.8,
+          "message": "The per-line release loop is not atomic with the reservation status change. If the loop throws partway through (e.g. release of line 3 fails after lines 1 and 2 succeeded), or if `markExpired` throws after all releases succeeded, the catch block only logs and the reservation remains pending. The next tick picks the same reservation up and releases every line again, inflating available inventory by the already-released quantities. Retry safety requires either a single transactional release+markExpired, or a per-line/per-reservation idempotency guard."
+        },
+        {
+          "file": "src/jobs/reservation-sweeper.ts",
+          "start_line": 57,
+          "end_line": 60,
+          "claimed_class": "Incorrect summary accounting",
+          "severity": "low",
+          "confidence": 0.6,
+          "message": "When `markExpired` returns null the iteration `continue`s without incrementing either `processed` or `failed`, so the returned `JobRunSummary` and the `sweep.completed` log under-report the batch: `processed + failed` will not equal `due.length`. Any runner logic that uses the summary to decide whether more work remains (e.g. drain-until-empty or backlog alerting) will see a batch that looks partially idle even though a full batch was consumed."
+        }
+      ],
+      "parse_error": null,
+      "usage": {
+        "input_tokens": 204,
+        "output_tokens": 1153,
+        "cache_creation_input_tokens": 3595,
+        "cache_read_input_tokens": 0
+      },
+      "cost_usd": 0.05231375,
+      "wall_seconds": 19.34,
+      "run_index": 0
+    },
+    {
+      "mode": "single_shot",
+      "fixture": "TS-0001",
+      "model": "claude-opus-5",
+      "stop_reason": "end_turn",
+      "findings": [
+        {
+          "file": "src/jobs/reservation-sweeper.ts",
+          "start_line": 48,
+          "end_line": 57,
+          "claimed_class": "race condition / data integrity (release before claim)",
+          "severity": "high",
+          "confidence": 0.8,
+          "message": "Inventory is released before the reservation is claimed via markExpired. If a concurrent confirm/cancel settles the reservation between findDueForExpiry and markExpired, markExpired returns null, but by then the units for every line have already been released back to available stock. The code treats that case as benign ('sweep.already_settled', continue) with no compensating re-reserve, so the stock ledger is inflated: units that were consumed by the confirmed order are also handed back to the available pool, permitting oversell. The claim (markExpired) should be attempted first and the release performed only when the claim succeeds (ideally in the same transaction)."
+        },
+        {
+          "file": "src/jobs/reservation-sweeper.ts",
+          "start_line": 48,
+          "end_line": 70,
+          "claimed_class": "non-idempotent retry / double release",
+          "severity": "high",
+          "confidence": 0.75,
+          "message": "The per-line release loop is not atomic with the state transition. If release succeeds for lines 1..k and then throws on line k+1 (or markExpired throws after all releases succeed), the reservation is left in the pending state and the catch block deliberately leaves it to be picked up on the next tick — at which point the already-released lines are released a second time. Each retry adds phantom available stock proportional to the lines that succeeded before the failure. The comment 'it stays pending and the next tick picks it up again' is only safe if release is idempotent per reservation-line, which the code does not ensure (no per-line progress marker, no transaction wrapping the whole reservation)."
+        }
+      ],
+      "parse_error": null,
+      "usage": {
+        "input_tokens": 204,
+        "output_tokens": 1117,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 3595
+      },
+      "cost_usd": 0.0307425,
+      "wall_seconds": 17.64,
+      "run_index": 1
+    },
+    {
+      "mode": "single_shot",
+      "fixture": "TS-0001",
+      "model": "claude-opus-5",
+      "stop_reason": "end_turn",
+      "findings": [
+        {
+          "file": "src/jobs/reservation-sweeper.ts",
+          "start_line": 48,
+          "end_line": 56,
+          "claimed_class": "race condition / double release of inventory",
+          "severity": "high",
+          "confidence": 0.75,
+          "message": "Inventory is released before the reservation is atomically claimed. `markExpired` returning `null` is explicitly treated as 'already settled' (i.e. some other actor confirmed, cancelled, or expired the reservation between `findDueForExpiry` and here), but by that point the code has already handed the units back to available stock via `inventory.release`. If the reservation was confirmed concurrently, its units are both fulfilled and returned to available inventory — the ledger over-counts stock and the warehouse can oversell. The mark/claim must succeed first (or the whole reservation+inventory update must be one transaction) before any release happens; the current order also silently swallows the discrepancy behind a `sweep.already_settled` counter without compensating."
+        },
+        {
+          "file": "src/jobs/reservation-sweeper.ts",
+          "start_line": 47,
+          "end_line": 66,
+          "claimed_class": "non-idempotent retry / partial application",
+          "severity": "high",
+          "confidence": 0.7,
+          "message": "The per-line release loop is not atomic with `markExpired`, and the catch block deliberately leaves the reservation pending so 'the next tick picks it up again'. Two failure windows produce double releases: (a) release succeeds for lines 1..k and throws on line k+1 — the reservation stays pending and the next tick re-releases lines 1..k; (b) all lines release successfully but `markExpired` throws — the next tick releases every line a second time. Either way available inventory is inflated by the already-released quantities, and repeated failures compound the drift on every tick since nothing records which lines were already returned."
+        }
+      ],
+      "parse_error": null,
+      "usage": {
+        "input_tokens": 204,
+        "output_tokens": 1793,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 3595
+      },
+      "cost_usd": 0.0476425,
+      "wall_seconds": 22.9,
+      "run_index": 2
+    },
+    {
+      "mode": "single_shot",
+      "fixture": "TS-0001",
+      "model": "claude-opus-5",
+      "stop_reason": "end_turn",
+      "findings": [
+        {
+          "file": "src/jobs/reservation-sweeper.ts",
+          "start_line": 50,
+          "end_line": 59,
+          "claimed_class": "Non-atomic state transition / double inventory release",
+          "severity": "high",
+          "confidence": 0.8,
+          "message": "Inventory is released before the reservation state is transitioned. If `markExpired` returns null (the reservation was confirmed or already settled by another actor between `findDueForExpiry` and `markExpired`), the units have already been handed back to available stock, yet the reservation is still counted as active/confirmed elsewhere. The code just increments `sweep.already_settled` and continues, permanently over-crediting inventory (stock oversell). The state check must gate the release: call `markExpired` first (or do both in one transaction) and only release when the transition actually succeeded."
+        },
+        {
+          "file": "src/jobs/reservation-sweeper.ts",
+          "start_line": 50,
+          "end_line": 53,
+          "claimed_class": "Non-idempotent retry / partial-batch data corruption",
+          "severity": "high",
+          "confidence": 0.75,
+          "message": "The per-line release loop is not atomic and not rolled back. If a reservation has multiple lines and a release for line N fails (or `markExpired` throws after all releases succeeded), the already-released lines are not re-reserved; the reservation stays pending, so the next tick re-fetches it and releases every line again. Each retry inflates available quantity for the lines that already succeeded. Either wrap the release + markExpired in a single transaction or make `release` idempotent per reservation line."
+        },
+        {
+          "file": "src/jobs/reservation-sweeper.ts",
+          "start_line": 56,
+          "end_line": 59,
+          "claimed_class": "Misreported run summary",
+          "severity": "low",
+          "confidence": 0.5,
+          "message": "When `markExpired` returns null the loop `continue`s without incrementing either `processed` or `failed`, so `JobRunSummary` under-reports the work attempted (due.length can exceed processed+failed). Callers/runners that use the summary to decide whether a backlog remains (e.g. whether to tick again immediately) will see a batch that looks empty of activity even though rows were consumed and inventory was mutated."
+        }
+      ],
+      "parse_error": null,
+      "usage": {
+        "input_tokens": 204,
+        "output_tokens": 1182,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 3595
+      },
+      "cost_usd": 0.0323675,
+      "wall_seconds": 23.9,
+      "run_index": 3
+    },
+    {
+      "mode": "single_shot",
+      "fixture": "TS-0001",
+      "model": "claude-opus-5",
+      "stop_reason": "end_turn",
+      "findings": [
+        {
+          "file": "src/jobs/reservation-sweeper.ts",
+          "start_line": 51,
+          "end_line": 58,
+          "claimed_class": "non-atomic state transition / data-integrity",
+          "severity": "high",
+          "confidence": 0.85,
+          "message": "Inventory is released before the reservation is marked expired, and the two steps are not in a single transaction. If `markExpired` returns null (the reservation was concurrently confirmed or already settled), the units for every line have already been handed back to available stock, yet the reservation is still active/confirmed. The code just bumps `sweep.already_settled` and continues, silently leaving the ledger over-counted (stock sold twice). The correct order is to claim/expire the reservation first (compare-and-set) and only release inventory once that claim succeeds."
+        },
+        {
+          "file": "src/jobs/reservation-sweeper.ts",
+          "start_line": 50,
+          "end_line": 68,
+          "claimed_class": "non-idempotent retry / double release",
+          "severity": "high",
+          "confidence": 0.8,
+          "message": "The per-line release loop can partially succeed: if `inventory.release` throws on the third of four lines, the first two lines' units have already been returned, but the reservation is never marked expired, so it stays pending and `findDueForExpiry` returns it again on the next tick. The next tick re-releases the lines that already succeeded, inflating available inventory by the duplicated quantities. The same happens if the process crashes between the release loop and `markExpired`. Releases need to be idempotent (keyed on reservation id) or performed atomically with the expiry transition."
+        },
+        {
+          "file": "src/jobs/reservation-sweeper.ts",
+          "start_line": 56,
+          "end_line": 60,
+          "claimed_class": "incorrect run summary accounting",
+          "severity": "low",
+          "confidence": 0.45,
+          "message": "Reservations that hit the `expired === null` branch are counted neither in `processed` nor in `failed`, so `runOnce` can return `{processed: 0, failed: 0}` even though a full batch of due rows was fetched and mutated. Any runner logic that uses the summary to decide whether work happened (e.g. back-off, or draining until processed === 0) will treat a batch of already-settled rows as an idle tick and can spin or stop draining a real backlog."
+        }
+      ],
+      "parse_error": null,
+      "usage": {
+        "input_tokens": 204,
+        "output_tokens": 1288,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 3595
+      },
+      "cost_usd": 0.0350175,
+      "wall_seconds": 18.57,
+      "run_index": 4
+    },
+    {
+      "mode": "single_shot",
+      "fixture": "TS-0001",
+      "model": "claude-opus-5",
+      "stop_reason": "end_turn",
+      "findings": [
+        {
+          "file": "src/jobs/reservation-sweeper.ts",
+          "start_line": 48,
+          "end_line": 56,
+          "claimed_class": "data-integrity / ordering race",
+          "severity": "high",
+          "confidence": 0.85,
+          "message": "Inventory is released before the reservation state is checked/claimed. `markExpired` returning `null` means the reservation was already settled (confirmed or expired) by another actor between `findDueForExpiry` and this write — but by then all of its lines have already been released back into available stock. For a concurrently *confirmed* reservation this permanently inflates available inventory (units are both shipped/committed and released), and the code silently swallows it as a `sweep.already_settled` metric. The state transition should be claimed first (compare-and-set to EXPIRED) and only then should the units be released."
+        },
+        {
+          "file": "src/jobs/reservation-sweeper.ts",
+          "start_line": 48,
+          "end_line": 68,
+          "claimed_class": "non-idempotent retry / double release",
+          "severity": "high",
+          "confidence": 0.8,
+          "message": "The per-line release loop is not atomic with `markExpired`. If `release` succeeds for lines 1..k and then throws (or `markExpired` throws) the reservation is left pending, so the next tick re-fetches it via `findDueForExpiry` and releases lines 1..k a second time. Repeated partial failures compound the over-release. Either release all lines in a single transaction with the state change, or make release idempotent per (reservation, line)."
+        },
+        {
+          "file": "src/jobs/reservation-sweeper.ts",
+          "start_line": 38,
+          "end_line": 46,
+          "claimed_class": "poison-batch starvation",
+          "severity": "medium",
+          "confidence": 0.6,
+          "message": "Failed reservations are deliberately left pending and `findDueForExpiry` orders by oldest expiry first with a bounded batch. A reservation that fails deterministically (e.g. a line whose SKU no longer exists in the inventory table) stays at the head of the ordering forever, so every subsequent tick re-fetches the same failing head entries and the rest of the backlog behind them never drains. There is no attempt counter, backoff, or dead-letter path."
+        }
+      ],
+      "parse_error": null,
+      "usage": {
+        "input_tokens": 204,
+        "output_tokens": 1569,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 3595
+      },
+      "cost_usd": 0.0420425,
+      "wall_seconds": 20.79,
+      "run_index": 5
+    },
+    {
+      "mode": "single_shot",
+      "fixture": "TS-0001",
+      "model": "claude-opus-5",
+      "stop_reason": "end_turn",
+      "findings": [
+        {
+          "file": "src/jobs/reservation-sweeper.ts",
+          "start_line": 47,
+          "end_line": 55,
+          "claimed_class": "Broken invariant / double-release of inventory",
+          "severity": "high",
+          "confidence": 0.85,
+          "message": "Inventory is released before the reservation is claimed. `markExpired` returning `null` is explicitly treated as \"already settled\" (e.g. the reservation was confirmed or expired concurrently), but by that point the units for every line have already been handed back to available stock. For a reservation that was confirmed between `findDueForExpiry` and this loop, the stock is both shipped against the confirmation and returned to availability, overstating inventory. The state transition must be claimed first (`markExpired` acting as the atomic guard) and only then should `release` be issued for the lines."
+        },
+        {
+          "file": "src/jobs/reservation-sweeper.ts",
+          "start_line": 47,
+          "end_line": 49,
+          "claimed_class": "Non-idempotent partial work on retry",
+          "severity": "high",
+          "confidence": 0.8,
+          "message": "The per-line release loop is not atomic and the reservation is only marked expired afterwards. If `release` succeeds for lines 1..k and throws on line k+1, the catch block leaves the reservation pending; the next tick re-fetches it via `findDueForExpiry` and releases lines 1..k a second time, permanently inflating available quantity for those SKUs. Either the releases and the state change need to be in one transaction, or release must be keyed/idempotent per reservation line."
+        },
+        {
+          "file": "src/jobs/reservation-sweeper.ts",
+          "start_line": 37,
+          "end_line": 51,
+          "claimed_class": "Race condition between concurrent sweepers",
+          "severity": "medium",
+          "confidence": 0.55,
+          "message": "`findDueForExpiry` selects due reservations without claiming or locking them, and the claim (`markExpired`) happens only after inventory has been released. Two concurrently running instances (or an overlapping tick, if the runner does not strictly serialize) will both see the same batch and both call `inventory.release` for the same lines; the loser only discovers the conflict at `markExpired`, after the double release has already happened."
+        },
+        {
+          "file": "src/jobs/reservation-sweeper.ts",
+          "start_line": 52,
+          "end_line": 55,
+          "claimed_class": "Misreported job summary",
+          "severity": "low",
+          "confidence": 0.5,
+          "message": "Reservations whose `markExpired` returns `null` are counted in neither `processed` nor `failed`, so a batch consisting entirely of already-settled rows returns `{processed: 0, failed: 0}` — indistinguishable from an empty batch — even though inventory mutations were performed. Any caller/backlog logic that keys off the summary to decide whether work remains or whether the tick was a no-op will be misled."
+        }
+      ],
+      "parse_error": null,
+      "usage": {
+        "input_tokens": 204,
+        "output_tokens": 1694,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 3595
+      },
+      "cost_usd": 0.0451675,
+      "wall_seconds": 21.4,
+      "run_index": 6
+    },
+    {
+      "mode": "single_shot",
+      "fixture": "TS-0001",
+      "model": "claude-opus-5",
+      "stop_reason": "end_turn",
+      "findings": [
+        {
+          "file": "src/jobs/reservation-sweeper.ts",
+          "start_line": 50,
+          "end_line": 57,
+          "claimed_class": "race condition / data integrity (release before claiming the reservation)",
+          "severity": "high",
+          "confidence": 0.8,
+          "message": "Inventory is released before the reservation is claimed via markExpired. If another actor confirms/cancels the reservation between findDueForExpiry and markExpired, markExpired returns null but the units have already been given back to available stock — the code just increments 'sweep.already_settled' and moves on, leaving the ledger inflated (stock released for a reservation that was actually consumed). The claim should happen first (markExpired / conditional state transition) and only on success should the lines be released, ideally in the same transaction."
+        },
+        {
+          "file": "src/jobs/reservation-sweeper.ts",
+          "start_line": 50,
+          "end_line": 66,
+          "claimed_class": "non-idempotent retry / double release",
+          "severity": "high",
+          "confidence": 0.75,
+          "message": "The per-line release loop is not atomic with markExpired. If release succeeds for some lines and then throws (or the process dies before markExpired), the reservation remains pending, so the next tick selects it again and re-releases the lines that already succeeded. Repeated failures therefore repeatedly inflate available inventory. Either wrap the releases plus the state transition in one transaction, or make release idempotent per reservation line (e.g. keyed by reservation id)."
+        },
+        {
+          "file": "src/jobs/reservation-sweeper.ts",
+          "start_line": 54,
+          "end_line": 58,
+          "claimed_class": "metric/summary accounting inconsistency",
+          "severity": "low",
+          "confidence": 0.5,
+          "message": "When markExpired returns null the reservation is counted in neither processed nor failed, so JobRunSummary can report processed + failed < due.length with no indication that work was skipped; a caller using the summary to decide whether the batch was fully drained (e.g. due.length === batchSize implies more work) gets a misleading signal."
+        }
+      ],
+      "parse_error": null,
+      "usage": {
+        "input_tokens": 204,
+        "output_tokens": 1186,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 3595
+      },
+      "cost_usd": 0.0324675,
+      "wall_seconds": 16.89,
+      "run_index": 7
+    },
+    {
+      "mode": "single_shot",
+      "fixture": "TS-0001",
+      "model": "claude-opus-5",
+      "stop_reason": "end_turn",
+      "findings": [
+        {
+          "file": "src/jobs/reservation-sweeper.ts",
+          "start_line": 50,
+          "end_line": 57,
+          "claimed_class": "race condition / double-release of inventory",
+          "severity": "high",
+          "confidence": 0.85,
+          "message": "Inventory is released before the reservation state is claimed. `markExpired` is the only guard that the reservation is still pending, but by the time it returns `null` (someone confirmed or cancelled the reservation concurrently, or another sweeper instance already expired it) the units have already been handed back via `inventory.release`. The code just bumps `sweep.already_settled` and moves on, leaving stock permanently inflated — units are credited to available inventory even though the reservation was actually confirmed and shipped. The state transition must be claimed first (compare-and-set on the reservation row) and only then should the units be released, ideally in the same transaction."
+        },
+        {
+          "file": "src/jobs/reservation-sweeper.ts",
+          "start_line": 48,
+          "end_line": 68,
+          "claimed_class": "non-atomic multi-step update / non-idempotent retry",
+          "severity": "high",
+          "confidence": 0.8,
+          "message": "The per-reservation work is not atomic and the retry path is not idempotent. If `inventory.release` succeeds for line 1 and throws for line 2 (or if `markExpired` throws after all lines are released), the catch block only records a failure and the comment says the reservation \"stays pending and the next tick picks it up again\". On that next tick the loop starts again at line 1 and releases the already-released quantities a second time, over-crediting available stock. The same happens if `markExpired` times out but actually committed. Releasing and marking need to happen in one transaction, or the release needs to be idempotent/keyed per reservation line."
+        },
+        {
+          "file": "src/jobs/reservation-sweeper.ts",
+          "start_line": 54,
+          "end_line": 57,
+          "claimed_class": "incorrect summary accounting",
+          "severity": "low",
+          "confidence": 0.5,
+          "message": "Reservations that come back `null` from `markExpired` are counted in neither `processed` nor `failed`, so `JobRunSummary` under-reports the rows consumed from the batch. A runner or alert that compares `processed + failed` against the batch size (e.g. to decide whether a backlog remains, or to detect a stalled sweeper) will silently mis-classify a batch made mostly of already-settled reservations as idle."
+        }
+      ],
+      "parse_error": null,
+      "usage": {
+        "input_tokens": 204,
+        "output_tokens": 1279,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 3595
+      },
+      "cost_usd": 0.0347925,
+      "wall_seconds": 29.97,
+      "run_index": 8
+    },
+    {
+      "mode": "single_shot",
+      "fixture": "TS-0001",
+      "model": "claude-opus-5",
+      "stop_reason": "end_turn",
+      "findings": [
+        {
+          "file": "src/jobs/reservation-sweeper.ts",
+          "start_line": 48,
+          "end_line": 56,
+          "claimed_class": "data-integrity / ordering race (double release of stock)",
+          "severity": "high",
+          "confidence": 0.85,
+          "message": "Inventory is released before the reservation row is claimed. `markExpired` returning `null` is explicitly treated as 'already settled' (confirmed/cancelled/expired by someone else), but by that point the sweeper has already called `inventory.release(...)` for every line. In the concurrent case — a confirm/cancel landing between `findDueForExpiry` and `markExpired`, or two runner instances/overlapping ticks sweeping the same batch — the units get returned to available stock even though the reservation was settled by another path (which will also return or consume them). Result: available quantity is inflated and stock can be oversold. The state transition must be claimed first (`markExpired` / conditional update on the pending state) and only released when it actually succeeds."
+        },
+        {
+          "file": "src/jobs/reservation-sweeper.ts",
+          "start_line": 48,
+          "end_line": 73,
+          "claimed_class": "non-atomic multi-step update / retry double-apply",
+          "severity": "high",
+          "confidence": 0.75,
+          "message": "The per-line releases and the `markExpired` state change are separate awaited operations with no transaction or idempotency key. If a later line's `release` throws, or if `markExpired` fails after the releases succeeded, the catch block only increments `failed` and leaves the reservation in the pending state — so the next tick re-selects it via `findDueForExpiry` and releases the already-released lines a second time. Every retry inflates available inventory by the quantity of the lines that succeeded previously. The release + expiry needs to be atomic (single transaction) or guarded so re-processing is idempotent."
+        },
+        {
+          "file": "src/jobs/reservation-sweeper.ts",
+          "start_line": 52,
+          "end_line": 56,
+          "claimed_class": "misleading job summary counters",
+          "severity": "low",
+          "confidence": 0.5,
+          "message": "When `markExpired` returns `null` the reservation is neither counted in `processed` nor in `failed`, yet inventory was already mutated on its behalf (see the ordering issue above). The `sweep.completed` log and the returned `JobRunSummary` can therefore report `processed + failed < due`, which hides a batch where stock was released without any corresponding expiry, making the double-release condition invisible to monitoring."
+        }
+      ],
+      "parse_error": null,
+      "usage": {
+        "input_tokens": 204,
+        "output_tokens": 1681,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 3595
+      },
+      "cost_usd": 0.0448425,
+      "wall_seconds": 22.42,
+      "run_index": 9
+    }
+  ]
+}

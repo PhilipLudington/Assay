@@ -237,6 +237,30 @@ Two stages:
    this finding describe this defect? Returns a boolean plus a confidence. Runs
    on Haiku with a tight structured-output schema.
 
+**The gate's failure direction is the opposite of the one assumed above.**
+Measured 2026-07-31 on `TS-0001` (see `results/locality/`): across ten
+single-shot runs, all 29 findings fell inside the proximity window of the seeded
+defect and **none of them described it**. They converged on three other
+concerns — an ordering race, a retry-idempotency hole, and a counter bug — that
+happen to live on the defect's own lines. Proximity scored 10/10; hand labelling
+scored 0/10.
+
+So the paragraph above is right that line matching is too brittle and wrong
+about how. The anticipated failure was a false *negative* (right defect, wrong
+line). The observed failure is a false *positive* at full strength, and it is
+the more dangerous of the two: a missed match depresses recall visibly, while a
+spurious match inflates it and looks like a good result. Two consequences:
+
+- **The proximity gate is a filter, never a decision.** Nothing may score a
+  match on proximity alone. `assay.corpus.locality` therefore reports its
+  matcher's verdict and requires hand labels to overrule it, and any tag settled
+  that way records that it was hand-labelled.
+- **The judge's validation set must contain this shape.** A set built only from
+  clean hits and obvious misses would let a judge that rubber-stamps "same
+  lines, plausible bug" score perfectly. Those 29 findings are committed and are
+  a ready-made adversarial slice: a judge that calls them matches is not fit to
+  adjudicate the corpus.
+
 **The judge is itself validated.** A one-time human-labeled adjudication set of
 ~100 candidate pairs is labeled by hand and committed to the repo. Every scoring
 run replays the judge against it and reports agreement. That number is published

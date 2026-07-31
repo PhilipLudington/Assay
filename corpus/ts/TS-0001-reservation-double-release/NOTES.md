@@ -66,13 +66,13 @@ neither contains the evidence:
 
 The Phase 0 pilot mis-tagged two of three defects `cross_file` while the author
 was actively trying not to, in both cases because the touched file leaked the
-invariant in a comment. So the tag here is `verified: false` until the
-locality-verification step measures it: run the single-shot reviewer with no
+invariant in a comment. So the tag here stayed `verified: false` until the
+locality-verification step measured it: run the single-shot reviewer with no
 tools; if it finds the defect, the defect is not `cross_file`, whatever this
 note argues.
 
-Two known ways this claim could fail, recorded now so the measurement is read
-honestly rather than defended:
+Two known ways this claim could fail were recorded before the measurement, so
+that it would be read honestly rather than defended:
 
 1. A reviewer can *guess* the shape — "does `markExpired` release the hold?" is
    a reasonable question to ask of that call without reading anything. A guess
@@ -82,6 +82,37 @@ honestly rather than defended:
    to back is a two-writes-for-one-event pattern that a suspicious reader may
    flag on principle.
 
+**Measured 2026-07-31: the claim survives. 0/10.** Ten single-shot runs
+(`claude-opus-5`, effort `high`, floor context, no tools) and not one named the
+double release. Transcript, labels and per-run reasoning:
+`results/locality/TS-0001-20260731T170244Z.json`.
+
+Failure mode 2 turned out to be the interesting one, and in a sharper form than
+this note anticipated. Every run *did* flag those exact lines — 29 findings
+across 10 runs, all in `reservation-sweeper.ts:47-73` — and the proximity
+matcher scored the defect found 10/10. Reading the text, all 29 are false
+positives. They converge on three concerns, none of which is the seeded defect:
+
+- **Release-before-claim.** Units are released before `markExpired` is called,
+  so a concurrent confirm makes `markExpired` return `null` after the stock is
+  already back. A real ordering concern — and *not* this defect, because that
+  `null` path returns at the status check before `releaseLines` runs, making it
+  the one path that releases exactly once.
+- **Non-idempotent retry.** A throw partway through the release loop leaves the
+  reservation pending, so the next tick re-releases the lines that succeeded.
+  Says "double release", but the mechanism is retry-after-partial-failure and
+  it needs an exception; the seeded defect fires on the happy path.
+- **Summary accounting.** `processed`/`failed` are not incremented on the
+  already-settled branch. Unrelated.
+
+Seven of ten runs recommend "claim via `markExpired` first, then release the
+lines" as the fix. Under the seeded defect that reordering still decrements
+`held` twice, so a reviewer that had read `reservation-repo.ts` could not
+propose it. That is the strongest single piece of evidence that the evidence
+really does sit outside the floor.
+
+Failure mode 1 — guessing the shape — did not occur once in ten runs.
+
 ## Difficulty: the saturation check
 
 The pilot found the seeded defect in 34 of 34 runs across all three scratch
@@ -89,9 +120,16 @@ fixtures. A corpus sitting at the recall ceiling cannot answer whether tools
 help, because recall has nowhere to climb, so **a single-shot detection rate of
 1.00 makes this fixture an authoring failure and it gets reworked.**
 
-**Observed single-shot detection rate: not yet measured.** It is recorded here,
-alongside the run ids and date, when the Phase 1 locality-verification runs
-land. Until then this fixture's difficulty is an argument, not a result.
+**Observed single-shot detection rate: 0.00 (0/10), 2026-07-31.** The fixture
+is not at the recall ceiling. It is at the other end, which is its own thing to
+watch: a defect no reviewer ever finds cannot discriminate between reviewers
+either, since recall is pinned at zero for all of them. The number worth having
+is the agentic rate on the same defect — if tools lift it off zero, this fixture
+is doing exactly the job the v1 research question needs. If they do not, it is
+too hard rather than too easy and gets reworked for the opposite reason.
+
+That measurement belongs to Phase 2, which owns `AgentReviewer`. Until it
+lands, this fixture's *difficulty* is measured only from below.
 
 ## Distractors
 
@@ -103,6 +141,24 @@ sampled once (check-then-act bait), a caught-logged-and-continued failure
 say why — and each is the kind of finding a reviewer emits when it has nothing
 better to say. Their strength is itself a measurement: if no reviewer ever bites,
 they are decoration and precision stays trivially near 1.0.
+
+**Measured 2026-07-31, and they are weak.** Across ten single-shot runs the
+stale-batch-timestamp distractor was matched once and the other two never. The
+authored bait is close to decoration.
+
+The same runs handed over much better bait for free. Every run independently
+raised **release-before-claim** and **non-idempotent retry** (described above),
+and both are exactly what a distractor is supposed to be: defensible-sounding,
+located on the change under review, and not the seeded defect. They are also
+strictly harder than the authored three, because they are arguable rather than
+merely tempting — a reviewer that flags them is reasoning, not padding.
+
+Folding them in is deferred rather than forgotten. Adding a distractor changes
+what precision means, and the K decision is measured on this fixture's
+precision variance; changing the bait and then measuring variance in the same
+pass would mix the two. The order is: settle K against the corpus as authored,
+then strengthen the distractors, then re-measure. Recorded here so the next
+authoring pass does not have to rediscover them.
 
 ## Authoring checks
 

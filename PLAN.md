@@ -20,13 +20,20 @@ execute mode live beyond this plan; when v1 ships they move to ROADMAP.md.
 condition was found unmeetable in Phase 0 and the gate was reworded on 2026-07-26
 to name precision variance, moving the K decision to the end of Phase 1. Phase 1
 in progress: the corpus format, the loader, the answer-key boundary, the first
-fixture (`TS-0001`) and the pilot-harness blockers are done, and as of
-2026-07-30 the boundary has been **observed** denying a live escape attempt
-rather than argued from the SDK's documentation — which was the gate blocking
-every measurement run. That probe also caught the boundary denying the
-reviewer's own answer channel, a defect that would have made both remaining
-measurements return zeros at full price. What remains is the measurement work
-itself: locality verification and the K run, now unblocked.
+fixture (`TS-0001`) and the pilot-harness blockers are done; on 2026-07-30 the
+boundary was **observed** denying a live escape attempt rather than argued from
+the SDK's documentation, which unblocked every measurement run.
+
+**Locality is now measured** (2026-07-31, 10 runs, $0.3974): `TS-0001`'s
+`cross_file` tag survives at 0/10 and the fixture is not saturated. The
+measurement's *second* result matters more than its first. The proximity matcher
+scored the defect found 10 times out of 10 and every match was a false positive
+— all 29 findings landed on the defect's own lines while describing three
+different bugs. DESIGN predicted line matching would fail by producing false
+*negatives*; this is the inverse, at full strength, and it means **K cannot be
+settled on the crude matcher**. Precision over the stored runs needs either hand
+labels or Phase 3's judge brought forward. That is the one thing standing
+between here and the Phase 1 gate.
 
 **Budget:** The DESIGN goal of "full sweep under $50" refers to the Phase 6
 publication sweep. Development spend across Phases 0–5 is separate and estimated
@@ -131,12 +138,44 @@ Before Phase 1, these must be true:
       schema, 16 tests / 18 cases, 14 of them rejections. The patch-reverses
       check moves to the loader task below, since it needs the fixture tree and
       not just the manifest.)
-- [ ] Implement the locality-verification step: run the single-shot reviewer
+- [x] Implement the locality-verification step: run the single-shot reviewer
       with no tools; a defect it finds is not `cross_file`. Locality is measured,
       not asserted (DESIGN Key Decisions, added after the Phase 0 pilot found two
-      of three tags wrong).
+      of three tags wrong). (completed 2026-07-31 — `assay.corpus.locality`, 39
+      tests, all offline. The measurement **refutes `cross_file` and nothing
+      else**: the floor holds both the hunks and the whole touched file, so a
+      run that finds the defect cannot separate `local` from `touched_file` —
+      that is structural and the loader already bounds it. A quiet run is a
+      *failure to refute*, so a claim only reports settled at n ≥ 10; below that
+      the verdict is `underpowered` and the tag stays unverified. The module
+      reports and never writes the manifest. `review_floor` lives here because
+      locality is the first thing that needs it — **Phase 2 must import it, not
+      re-implement it**, or its identical-floor contract test will pass while
+      the thing it protects is broken. Two other PLAN items ride the same runs
+      at no extra cost: saturation, below, and distractor bites.)
+- [x] Measure `TS-0001`'s locality tag. (completed 2026-07-31 — 10 single-shot
+      runs, `claude-opus-5`, effort `high`, $0.3974. **`cross_file` survives at
+      0/10** and is now `verified: true`. Evidence:
+      `results/locality/TS-0001-20260731T170244Z.json`.
+      **The proximity matcher scored it 10/10 and every match was a false
+      positive**, which is the result worth carrying forward. All 29 findings
+      landed on the defect's own lines while describing three *different*
+      concerns — release-before-claim ordering, non-idempotent retry, and
+      summary accounting. Seven of ten runs recommend "claim via `markExpired`
+      first, then release", a fix that would still double-release; a reviewer
+      that had read `reservation-repo.ts` could not propose it, which is the
+      strongest evidence the evidence really is outside the floor. Detection was
+      therefore hand-labelled and the manifest records that it was. DESIGN
+      predicted proximity would fail by producing false *negatives*; this is the
+      inverse, at full strength, and it is a ready-made adversarial case for the
+      Phase 3 judge — a judge that scores these 29 as matches is not fit to
+      adjudicate the corpus, and the pairs are already on disk.)
 - [ ] Measure precision variance on `TS-0001` *with* its distractor and settle K.
-      Carried over from the Phase 0 gate.
+      Carried over from the Phase 0 gate. **Blocked on a matcher, not on runs:**
+      the 10 stored runs already contain the finding sets, but precision over
+      them is exactly what the 10/10 false-positive result shows proximity
+      cannot compute. Either hand-label the finding sets or bring Phase 3's
+      judge forward; do not settle K on the crude matcher.
 
 #### Blockers raised by the 2026-07-26 QA review
 These gate Phase 1 completion. The first is the project's stated highest-severity
@@ -283,15 +322,37 @@ because Phase 1 reuses the pilot harness for locality verification and the K run
       return. `tests/test_corpus_fixtures.py` re-validates the shipped corpus on
       every run — load, repo size inside the measured 25–50, no VCS history
       anywhere under a fixture root, every fixture carries a distractor.)
-- [ ] **Treat recall saturation as an authoring failure.** The Phase 0 pilot hit
+- [x] **Treat recall saturation as an authoring failure.** The Phase 0 pilot hit
       100% detection on 3 of 3 defects across 34 runs. If `TS-0001`'s defect is
       also found by every single-shot run, the fixture is too easy and gets
       reworked — a corpus at the recall ceiling cannot answer whether tools help,
       because recall has nowhere to climb. Record the observed detection rate in
-      NOTES.md alongside the provenance. (Standard written into
-      `TS-0001/NOTES.md` on 2026-07-26 with the number left explicitly
-      unmeasured; it is filled by the same single-shot runs that settle
-      locality, so this closes with the two measurement tasks above.)
+      NOTES.md alongside the provenance. (completed 2026-07-31 — **0.00 (0/10)**,
+      recorded in `TS-0001/NOTES.md`. Not saturated, and the check is enforced in
+      code rather than remembered: `DefectVerdict.saturated` refuses to report a
+      fixture settled at a detection rate of 1.00 whatever its locality verdict
+      says.
+      Worth stating plainly, because the standard as written only guards one
+      end: a defect *no* reviewer ever finds cannot discriminate between
+      reviewers either — recall is pinned at zero for all of them. The number
+      that decides which case this is, is the **agentic** rate on the same
+      defect, and that is Phase 2's to measure. If tools lift it off zero the
+      fixture is doing exactly the job the v1 question needs; if they do not it
+      is too hard rather than too easy, and gets reworked for the opposite
+      reason. NOTES.md says so rather than quietly banking the 0.00 as a pass.)
+- [ ] **Strengthen `TS-0001`'s distractors, after K is settled.** Measured
+      2026-07-31: across 10 runs the stale-batch-timestamp bait was matched once
+      and the other two never, so the authored distractors are close to
+      decoration and precision against them conveys little. The same runs handed
+      over better bait for free — every run independently raised
+      release-before-claim and non-idempotent-retry, both defensible, both on
+      the change under review, both not the seeded defect, and both *arguable*
+      rather than merely tempting. Deferred deliberately: adding a distractor
+      changes what precision means, and K is measured on this fixture's
+      precision variance, so changing the bait and measuring variance in one
+      pass would mix the two. Order is settle K → strengthen → re-measure.
+      Candidates recorded in `TS-0001/NOTES.md` so the next pass need not
+      rediscover them.
 - [ ] Strip git history from fixture repos as a build step, not a manual habit.
       (Partly closed 2026-07-26 from the other end: `assert_isolated` refuses a
       fixture with surviving history at load, and `test_corpus_fixtures.py` fails
@@ -321,8 +382,18 @@ Before Phase 2, these must be true:
 - [ ] **K is chosen and justified by observed precision variance** on `TS-0001`
       with its distractor. Inherited from the Phase 0 gate, which could not meet
       it — see FINDINGS. Choose the acceptable CI half-width *before* reading the
-      numbers.
-- [ ] `TS-0001`'s locality tag is verified by measurement, not asserted.
+      numbers. **The runs exist** (10 single-shot, stored); what is missing is a
+      matcher trustworthy enough to compute precision over them, which the
+      2026-07-31 10/10 false-positive result rules out for proximity.
+- [x] `TS-0001`'s locality tag is verified by measurement, not asserted.
+      (2026-07-31 — `cross_file`, 0/10, `verified: true`. The author's argument
+      was that the evidence lives in `reservation-repo.ts`, untouched by the
+      diff; ten no-tools runs agreed by failing to find it, and seven of them
+      proposed a fix that only makes sense if they had not read that file.
+      Detection was hand-labelled over the matcher, and both the manifest and
+      `results/locality/README.md` say so — an unqualified "verified" that
+      quietly rested on a matcher this run proved wrong would be the same class
+      of error the tag exists to prevent.)
 - [x] Isolation test passes, and manifest validation rejects a patch that does
       not reverse against `repo/`. (Both **passing** as of 2026-07-26 — isolation
       56 cases, loader 31. The reversal check landed in `assay.corpus.loader`
@@ -549,6 +620,7 @@ published run ID.
 |---|---|---|---|
 | Answer-key leakage into reviewer context | Critical — all numbers invalid, silently | Low **→ raised 2026-07-26, lowered furthest 2026-07-30**: the pilot harness enforced nothing beyond `cwd`; `assay.executor` now denies those calls by default, and a live confined run has been *observed* refusing a planted bait read with the canary absent from the transcript | Executor path confinement (default-deny, symlink- and `..`-resolving); history-free fixtures; isolation test treated as correctness-critical and re-run whenever executor or layout changes. **Re-run `assay.executor.probe` on every `claude-agent-sdk` upgrade** — the deny is honoured by a dependency, so it can regress with no change here and no test would notice. **Keep auditing transcripts for out-of-`repo/` paths after every run batch**: the audit is what established the pilot's own numbers were clean |
 | Judge agreement too low to trust | Critical — blocks the project | Medium | Phase 3 readiness gate stops work; revise judge, never the labels |
+| Matching inflates recall by scoring plausible-but-wrong findings on the defect's own lines | Critical — a spurious match looks like a good result, where a missed one visibly depresses recall | **High — observed 2026-07-31**: on `TS-0001`, 29 of 29 findings fell inside the proximity window and none described the seeded defect (10/10 by matcher, 0/10 by hand) | Proximity is a filter, never a decision — nothing scores a match on it alone. Locality tags settled against it must record that they were hand-labelled. **The judge's validation set must include this shape**, or a judge that rubber-stamps "same lines, plausible bug" scores perfectly against it; those 29 findings are committed as a ready-made adversarial slice |
 | Run-to-run variance swamps signal; K must rise | High — cost scales with K | Medium | Measured in Phase 0 before anything is built on an assumed K |
 | Agent SDK blocks prefix caching | Medium — agentic cost rises | Medium | Measured in Phase 0; fallback is a Client SDK tool loop for the agentic reviewer |
 | Corpus too small or biased for numbers to mean much | Medium — limits claims, not correctness | High | Stated plainly in README before any percentage; contribution path for external fixtures |

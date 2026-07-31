@@ -1,4 +1,11 @@
-"""Corpus format: manifest schema, taxonomy, loader, locality verification."""
+"""Corpus format: manifest schema, taxonomy, loader, locality verification.
+
+`assay.corpus.locality` is deliberately not re-exported, matching
+`assay.executor`'s rule for `hooks` and `probe`: it imports the Anthropic SDK in
+order to run a reviewer, and nothing that only needs to *load* a fixture should
+pay for that import. Re-exporting it would also make
+`python -m assay.corpus.locality` import the module twice.
+"""
 
 from assay.corpus.loader import (
     LOCALITY_ORDER,

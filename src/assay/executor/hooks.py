@@ -90,34 +90,47 @@ def boundary_hook(boundary: PathBoundary) -> HookCallback:
             # the far side actually sent. `check` re-validates the shape.
             tool_input: Any = input_data.get("tool_input", {})
             violation = boundary.check(tool_name, tool_input)
+
+            if violation is None:
+                # Silence, not "allow": approving here would override deny rules
+                # configured elsewhere in the executor.
+                return {}
+
+            # Inside the `try` on purpose. These two statements decide a denial
+            # and are the last thing to run on the path that matters, so leaving
+            # them outside would mean the callback could still raise after
+            # deciding to refuse — the one case the docstring promises cannot
+            # happen. Recording and formatting are cheap; the guarantee is not.
+            boundary.record(violation)
+            return _deny(
+                f"Refused by the fixture boundary — {violation.message}. "
+                "The review is confined to this repository; there is nothing "
+                "above it you are meant to see."
+            )
         except Exception as error:  # noqa: BLE001 — deliberately broad; see docstring
             # Denying is the safe direction, but a boundary that broke must not
             # look like a boundary that held: record it so the run's transcript
             # shows the failure instead of a clean sheet.
             logger.exception("path boundary failed internally; denying the call")
-            violation = BoundaryViolation(
-                tool=tool_name,
-                field=None,
-                value=None,
-                reason=(
-                    "boundary check failed internally "
-                    f"({error.__class__.__name__}: {error})"
-                ),
+            try:
+                boundary.record(
+                    BoundaryViolation(
+                        tool=tool_name,
+                        field=None,
+                        value=None,
+                        reason=(
+                            "boundary check failed internally "
+                            f"({error.__class__.__name__}: {error})"
+                        ),
+                    )
+                )
+            except Exception:  # noqa: BLE001 — the deny below must still happen
+                # Bookkeeping failing is bad — the transcript now understates
+                # what went wrong — but it must not cost us the refusal itself.
+                logger.exception("could not record the boundary failure")
+            return _deny(
+                "Refused because the fixture boundary errored while checking this call."
             )
-            boundary.record(violation)
-            return _deny(f"Refused because the fixture boundary errored — {violation.reason}")
-
-        if violation is None:
-            # Silence, not "allow": approving here would override deny rules
-            # configured elsewhere in the executor.
-            return {}
-
-        boundary.record(violation)
-        return _deny(
-            f"Refused by the fixture boundary — {violation.message}. "
-            "The review is confined to this repository; there is nothing "
-            "above it you are meant to see."
-        )
 
     return hook
 

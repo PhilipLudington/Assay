@@ -503,6 +503,37 @@ assay/
   that was never exercised has not been verified, and recording it as verified
   is the failure this whole line of work started from.
 
+- **Decision:** The probe also judges its own harness, reporting `MISCONFIGURED`
+  when the answer channel returned nothing or the SDK flagged the run as errored.
+  Added 2026-07-31 after QA review.
+  **Alternatives considered:** Leaving the rule in prose — `results/boundary-probe/README.md`
+  already told a human reader that a run with a null `structured_output` proves
+  nothing — and relying on transcripts being read before being cited.
+  **Rationale:** The incident that created this module was not a boundary
+  failure. On 2026-07-30 the bait was refused and the canary never appeared, so
+  every boundary signal looked perfect, while `StructuredOutput` was denied twice
+  and the run ended in a parse error. Judging only the boundary would have
+  certified that run as `HELD` with exit 0. A rule that lives only in prose is
+  enforced exactly as often as someone reads the prose, and the exit code is what
+  CI will actually consult on the next SDK upgrade. A real breach still outranks
+  a broken harness in the verdict order: a leak happened whether or not the
+  answer channel worked, and burying it under `MISCONFIGURED` would report the
+  less urgent fact.
+
+- **Decision:** The reviewer's tool policy lives in one importable module,
+  `assay.executor.policy`. Added 2026-07-31 after QA review.
+  **Alternatives considered:** Keeping the lists at each call site and adding a
+  test that asserts the copies agree.
+  **Rationale:** They were duplicated between `assay.executor.probe` and
+  `pilot/run_agentic.py`, and had already drifted: the probe did not deny
+  `TodoWrite`. That matters more than ordinary duplication because the probe's
+  entire evidentiary claim is that it runs *the reviewer's exact configuration* —
+  a claim this design repeats — so a drifted copy means the run certifying the
+  boundary measured a configuration nothing else uses. This is the second
+  instance of that exact shape; the first was the probe running without an
+  `output_format`. A consistency test would catch the next drift, but only after
+  it was written; one definition makes the drift unrepresentable.
+
 - **Decision:** SARIF as an input format in v1; output deferred to v1.1.
   **Rationale:** Parsing SARIF is cheap and immediately delivers the eval-first
   promise that any reviewer can be measured. Emitting it is an adoption feature

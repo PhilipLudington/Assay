@@ -5,11 +5,15 @@
     .venv/bin/python pilot/run_agentic.py --fixture medium --runs 2
 
 The standalone-script header is gone because this now imports the real
-answer-key boundary from `assay.executor`. That is the one place the pilot
-depends on production code, and it is deliberate: the Phase 1 gate forbids any
-measurement run while the boundary is unenforced, and the locality-verification
-run happens on this harness. Duplicating the boundary here would mean the
-control that is tested and the control that runs are different code.
+answer-key boundary — and the reviewer's tool policy — from `assay.executor`.
+That is the one place the pilot depends on production code, and it is
+deliberate: the Phase 1 gate forbids any measurement run while the boundary is
+unenforced, and the locality-verification run happens on this harness.
+Duplicating the boundary here would mean the control that is tested and the
+control that runs are different code. The same argument applies to
+`READ_ONLY_TOOLS`/`DENIED_TOOLS`: they were duplicated once, drifted on
+`TodoWrite`, and the probe that certifies the boundary was measuring a
+configuration this script does not run. See `assay.executor.policy`.
 
 
 Answers Q2 (is Glob/Grep navigation non-trivial at this repo size?) and the
@@ -45,6 +49,7 @@ from claude_agent_sdk import (
 )
 
 from assay.executor.hooks import confinement_hooks
+from assay.executor.policy import DENIED_TOOLS, READ_ONLY_TOOLS
 from common import (
     DEFAULT_MODEL,
     FINDING_SCHEMA,
@@ -56,18 +61,6 @@ from common import (
     transcript_path,
     utc_stamp,
 )
-
-READ_ONLY_TOOLS = ["Read", "Glob", "Grep"]
-DENIED_TOOLS = [
-    "Bash",
-    "Write",
-    "Edit",
-    "NotebookEdit",
-    "WebFetch",
-    "WebSearch",
-    "Task",
-    "TodoWrite",
-]
 
 USER_PROMPT = (
     "Review the change described in your instructions. You may read the "

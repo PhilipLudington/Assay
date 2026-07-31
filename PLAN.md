@@ -359,7 +359,7 @@ Before Phase 2, these must be true:
 - [x] The remaining two QA blockers above are closed. (2026-07-29 — both, with
       the failure paths tested rather than assumed.) No measurement run that
       feeds a recorded decision happens until the answer-key boundary is both
-      enforced (done) and observed to fire (above, still open).
+      enforced (done) and observed to fire (above, observed 2026-07-30).
 
 ---
 

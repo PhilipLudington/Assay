@@ -510,6 +510,31 @@ async def test_hook_fails_closed_when_the_check_itself_raises(
     assert "unanticipated input shape" in boundary.violations[0].reason
 
 
+async def test_hook_still_denies_when_recording_the_violation_raises(
+    boundary: PathBoundary, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The refusal must not depend on the bookkeeping that follows it.
+
+    `record` used to run outside the `try`, so a failure there escaped the
+    callback after the boundary had already decided to deny — the one case the
+    module docstring promises cannot happen. The SDK reduces an exception out of
+    a hook to an unlogged protocol error, and what the CLI does with it under
+    `bypassPermissions` is undocumented, so an escaping exception is an
+    unresolved allow.
+    """
+
+    def explode(*args: Any, **kwargs: Any) -> None:
+        raise RuntimeError("violation log is full")
+
+    monkeypatch.setattr(boundary, "record", explode)
+    hook = boundary_hook(boundary)
+
+    event = pre_tool_use("Read", {"file_path": "../answer.yaml"})
+    output = await hook(event, None, HOOK_CONTEXT)  # type: ignore[arg-type]
+
+    assert decision(output) == "deny"  # type: ignore[arg-type]
+
+
 def test_confinement_hooks_matches_every_tool(fixture: Fixture) -> None:
     _, matchers = confinement_hooks(fixture.repo)
 

@@ -476,6 +476,33 @@ assay/
   violation — a run in which the control broke must never be indistinguishable
   from a clean one.
 
+- **Decision:** Default-deny carries one explicit exception — a `CONTROL_PLANE_TOOLS`
+  allowlist for tools that read nothing. Added 2026-07-30 after the live probe.
+  **Alternatives considered:** Weakening default-deny to "allow any tool with no
+  path-bearing fields", which would have fixed the same symptom.
+  **Rationale:** `StructuredOutput` is how the CLI returns a `--json-schema`
+  result, so denying it left every agentic run with zero findings and a parse
+  error — the boundary was confining the reviewer *and* gagging it. The general
+  rule was not wrong; the allowlist was incomplete. A category-based exemption
+  would re-open the hole default-deny exists to close, because the next tool
+  that happens to carry no path would be admitted without anyone deciding to
+  admit it. A name list forces that decision to be made and written down.
+  The exempted tool's inputs are deliberately not path-checked: a finding
+  legitimately cites a repo-relative file, and treating those citations as
+  attempted accesses would reject correct output.
+
+- **Decision:** The live boundary probe is production code, not a one-off script.
+  Added 2026-07-30.
+  **Rationale:** What it tests — that the Agent SDK honours a `PreToolUse` deny
+  under `bypassPermissions` — is a *dependency's* behaviour. It can regress on
+  an SDK upgrade with no change to this repository, and no unit test would
+  notice, because unit tests can only exercise our side of the boundary. So the
+  probe ships, is re-run on upgrade, and its transcript is committed as evidence
+  under `results/boundary-probe/`. It also reports a run in which the reviewer
+  never attempted an escape as `INCONCLUSIVE` rather than as a pass: a control
+  that was never exercised has not been verified, and recording it as verified
+  is the failure this whole line of work started from.
+
 - **Decision:** SARIF as an input format in v1; output deferred to v1.1.
   **Rationale:** Parsing SARIF is cheap and immediately delivers the eval-first
   promise that any reviewer can be measured. Emitting it is an adoption feature

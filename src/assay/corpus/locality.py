@@ -446,6 +446,26 @@ def run_key(index: int, defect_id: str) -> str:
     return f"{index}:{defect_id}"
 
 
+def partition_runs(
+    runs: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Splits a transcript's runs into `(billed, scored)`.
+
+    Three tiers, not two. A run that failed outright produced nothing and is
+    excluded everywhere. A run whose structured output would not parse still
+    cost money and still has to appear in the spend, but its finding list is
+    *unknown* rather than empty — scoring it as "found nothing" would depress
+    every rate computed over it.
+
+    Defined once, here, because `assay.eval.precision` scores the same
+    transcripts. Two implementations of "which runs count" is how a scored-run
+    denominator comes to differ between two reports of the same batch.
+    """
+    billed = [r for r in runs if not r.get("failed")]
+    scored = [r for r in billed if not r.get("parse_error")]
+    return billed, scored
+
+
 # --- verdicts ----------------------------------------------------------------
 
 
@@ -543,13 +563,10 @@ def classify(
     labels = labels or {}
     runs = list(transcript.get("runs", []))
 
-    # Three tiers, not two. A run that failed outright produced nothing. A run
-    # whose structured output would not parse still cost money and still has to
-    # be reported, but its finding list is *unknown* rather than empty — scoring
-    # it as "found nothing" would depress detection and could turn a refutable
+    # Three tiers, not two — see `partition_runs`. Scoring an unparseable run as
+    # "found nothing" would depress detection and could turn a refutable
     # cross_file claim into a surviving one.
-    billed = [r for r in runs if not r.get("failed")]
-    scored = [r for r in billed if not r.get("parse_error")]
+    billed, scored = partition_runs(runs)
 
     items = ground_truth(fixture)
     defects = [item for item in items if item.is_defect]

@@ -142,9 +142,19 @@ say why — and each is the kind of finding a reviewer emits when it has nothing
 better to say. Their strength is itself a measurement: if no reviewer ever bites,
 they are decoration and precision stays trivially near 1.0.
 
-**Measured 2026-07-31, and they are weak.** Across ten single-shot runs the
-stale-batch-timestamp distractor was matched once and the other two never. The
-authored bait is close to decoration.
+**Measured 2026-07-31, and they are weak.** Across ten single-shot runs,
+hand-labelled finding by finding: stale-batch-timestamp bitten 1/10,
+logged-and-continued-error 1/10, redundant-empty-batch-return 0/10. The authored
+bait is close to decoration.
+
+The proximity matcher had put that first number at 1/10 and the other two at
+0/10, and it was right by luck rather than by reading. Neither bite it could see
+was the one a reader attributes: the logged-and-continued bite (run 5) argues
+that failed reservations are left pending with no backoff or dead-letter path —
+that is the swallowed-error bait, taken squarely — while citing lines 38–46
+rather than the catch block at 65–74. Proximity filed it nowhere. This is the
+same lesson as the 10/10 detection false positive, in miniature: where a finding
+points and what it is about are different questions.
 
 The same runs handed over much better bait for free. Every run independently
 raised **release-before-claim** and **non-idempotent retry** (described above),
@@ -153,12 +163,29 @@ located on the change under review, and not the seeded defect. They are also
 strictly harder than the authored three, because they are arguable rather than
 merely tempting — a reviewer that flags them is reasoning, not padding.
 
-Folding them in is deferred rather than forgotten. Adding a distractor changes
-what precision means, and the K decision is measured on this fixture's
-precision variance; changing the bait and then measuring variance in the same
-pass would mix the two. The order is: settle K against the corpus as authored,
-then strengthen the distractors, then re-measure. Recorded here so the next
-authoring pass does not have to rediscover them.
+Folding them in was deferred so that changing the bait and measuring K's
+precision variance would not happen in the same pass. **K was settled on
+2026-08-01** (see PLAN Phase 1 and `results/precision/README.md`), so that
+ordering constraint is discharged and this is now unblocked. Recorded here so
+the next authoring pass does not have to rediscover the candidates.
+
+## Precision: measured 2026-08-01, and it is the floor
+
+Over the same ten runs, hand-labelled finding by finding:
+**0 true positives in 29 findings.** Per-run precision was 0.00 in all ten, so
+the mean is 0.00 with no run-to-run variation at all; pooled and given an exact
+interval it is `[0.00, 0.12]`. Labels and their reasoning:
+`results/precision/TS-0001-20260731T170244Z.finding-labels.json`.
+
+This is the mirror of the saturation problem and deserves the same suspicion. A
+fixture where the single-shot reviewer scores zero on *both* axes cannot
+discriminate between reviewers on its own — there is nothing below zero for a
+worse reviewer to reach. What makes it useful rather than useless is entirely
+the agentic number, which Phase 2 owns: if tools lift recall off zero here, the
+fixture is doing exactly the job the v1 question needs, and precision has
+somewhere to move too. If they do not, this fixture is too hard and gets
+reworked, and the fact that its precision was also pinned at zero is part of the
+evidence for that.
 
 ## Authoring checks
 

@@ -22,9 +22,11 @@ the split is deliberate — see Key Decisions.
 
 ## Goals
 
-- [ ] Compute per-reviewer precision and recall over the corpus, reported as a
-      mean across K runs with a bootstrap 95% confidence interval, not a point
-      estimate.
+- [ ] Compute per-reviewer precision and recall over the corpus, reported with a
+      95% confidence interval rather than as a point estimate — **exact
+      (Clopper–Pearson) for a rate, bootstrap for a mean of per-run values.**
+      Amended 2026-08-01: the bootstrap alone returns ±0.00 over a constant
+      sample, and every batch measured so far has been constant.
 - [ ] Publish the **judge's own** agreement rate against human-labeled pairs in
       the same README as the reviewer scores. A benchmark that hides the
       reliability of its scoring mechanism is not a benchmark.
@@ -37,8 +39,11 @@ the split is deliberate — see Key Decisions.
       cost?** — reported broken out by defect locality, not only in aggregate.
 - [ ] Demonstrate reviewer isolation: a test asserts no reviewer can reach a
       fixture's answer key from inside the repo it is reviewing.
-- [ ] Detect regressions across model versions as CI non-overlap between runs,
-      and date-stamp every published result.
+- [ ] Detect regressions across model versions as CI non-overlap between runs
+      **at corpus level**, and date-stamp every published result. Amended
+      2026-08-01: per fixture, non-overlap cannot resolve even 0/5 against 5/5,
+      so per-fixture rates are published as bare counts with no interval and no
+      verdict.
 - [ ] Complete a full v1 sweep (3 reviewers × 15 fixtures × 5 runs, plus judge
       adjudication) for under $50 in API spend.
 
@@ -281,10 +286,34 @@ caught if any reviewer caught it. Panel precision requires deduplicating
 findings across reviewers, which reuses the same judge to decide whether two
 findings describe the same thing.
 
-**Nondeterminism.** A score is defined over K runs (default K=5). Reported
-values are the mean with a bootstrap 95% CI. A regression is CI non-overlap
-between two runs, never a point-to-point comparison. All K transcripts are
-retained; nothing is averaged away at write time.
+**Nondeterminism.** A score is defined over K runs (K=5; settled 2026-08-01, see
+below). All K transcripts are retained; nothing is averaged away at write time.
+
+Intervals are chosen by what is being estimated, not by convention:
+
+- A **rate** — a count of successes out of n runs, like recall on one fixture —
+  gets an exact Clopper–Pearson interval. It is defined at 0/n and n/n, which is
+  where the measurements actually land: 0/10 reports `[0.00, 0.31]`.
+- A **mean of per-run values** — like the mean of K per-run precisions, each
+  itself a ratio — gets the bootstrap, which is the right estimator for it and
+  carries a `degenerate` flag when the sample is constant.
+
+The distinction is not academic. Every batch this project has measured has been
+constant — 34/34 detection in the Phase 0 pilot, then 0/10 on `TS-0001`, then
+per-run precision 0.00 ten times out of ten — and a percentile bootstrap
+resamples a constant sample to itself, reporting ±0.00 at *every* K. Zero sample
+variance is not zero sampling uncertainty. `assay.eval.interval` owns both, and
+`score.py` imports it rather than reimplementing it.
+
+**Where a difference may be claimed.** A regression is CI non-overlap between
+two runs at **corpus level**, never a point-to-point comparison and never per
+fixture. Non-overlap is a conservative test, and per fixture it is conservative
+past the point of usefulness: at K=5 even 0/5 against 5/5 — the largest effect a
+five-run cell can show — has overlapping intervals, and separation does not
+appear until K=20 *and* a flawless result. A per-fixture table carrying intervals
+would print "no difference" whatever happened, so per-fixture rates ship as bare
+counts (`0/10`) with no interval and no verdict. A raw count is honest; an
+interval that is inconclusive by construction is not.
 
 ### Executor
 
@@ -342,14 +371,19 @@ assay/
 │   ├── reviewers/             # single_shot, agentic, sarif adapter
 │   ├── executor/
 │   ├── eval/
+│   │   ├── interval.py        # exact + bootstrap CIs (landed in Phase 1)
+│   │   ├── precision.py       # precision from labels (landed in Phase 1)
 │   │   ├── match.py           # proximity gate
 │   │   ├── judge.py           # semantic adjudication
-│   │   ├── score.py           # metrics, bootstrap CI
+│   │   ├── score.py           # metrics, importing interval.py
 │   │   └── replay.py
 │   └── cli.py                 # assay run | score | report
 ├── corpus/ts/…                # fixtures
 ├── adjudication/labeled.jsonl # human-labeled judge validation set
 └── results/
+    ├── boundary-probe/        # evidence the answer-key deny fires
+    ├── locality/              # locality-verification transcripts
+    ├── precision/             # finding-level labels + the K decision
     ├── runs/<run-id>/         # transcripts (gitignored if large)
     └── 2026-08-sonnet-5.md    # published, date-stamped
 ```
@@ -407,11 +441,36 @@ assay/
   leave bad rules in place. It also means historical runs stay comparable
   against new scoring logic.
 
-- **Decision:** K=5 runs, bootstrap CI, regressions defined as CI non-overlap.
+- **Decision:** K=5 runs, regressions defined as CI non-overlap at corpus level.
   **Alternatives considered:** Single run; point-estimate comparison.
   **Rationale:** Reviewer output is nondeterministic. A single run cannot
   distinguish a real regression from sampling noise, and point comparison would
   generate false regression alarms that erode trust in the whole harness.
+  **Amended 2026-08-01, and the amendment is the interesting part.** K was meant
+  to be chosen from observed run-to-run variance. It could not be, twice: recall
+  variance was zero across 34 pilot runs, and precision variance was zero across
+  `TS-0001`'s ten. The reason K is 5 is not the variance but the clustering — K
+  runs of one fixture are a cluster, not K independent observations of the
+  corpus, so they contribute `1/(1 + (K-1)ρ)` each. Every batch measured has
+  looked like ρ = 1, where repeats contribute nothing at all; even at a generous
+  ρ = 0.5, going K=5→20 narrows the corpus half-width by 0.014 for four times the
+  spend. **Corpus size is the binding constraint on every published width, not
+  K** — 15 fixtures gives ±0.24 overall and ~±0.38 per locality tier, and ±0.15
+  would need roughly 45 fixtures at any K. The decision is revocable on a stated
+  trigger: the first batch whose per-run scores are not constant gets K
+  re-measured on it.
+
+- **Decision:** Exact intervals for rates; the bootstrap kept only for means of
+  per-run values, and flagged when it collapses.
+  **Alternatives considered:** Bootstrap everywhere, as originally specified;
+  a normal approximation.
+  **Rationale:** The bootstrap resamples the observed values, so a constant
+  sample yields a zero-width interval at every K — and constant is the *common*
+  case here, not the corner case. Published as `0.00 ±0.00` that is a claim of
+  certainty nobody measured, and as an input to the K decision it would have
+  argued for K=1. A normal approximation fails identically at the boundary and
+  less visibly. Clopper–Pearson is exact, defined at 0/n and n/n, and slightly
+  conservative — the right direction for a benchmark to err.
 
 - **Decision:** Both single-shot and agentic reviewers ship in v1.
   **Alternatives considered:** Agentic only (matches the SDLC being codified).
@@ -619,9 +678,15 @@ noise. Mitigated by measuring and publishing it, but not eliminated — and if t
 agreement rate comes back poor, the honest response is to say so rather than
 tune the adjudication set until it looks better.
 
-**K=5 may not be enough.** If run-to-run variance is high, confidence intervals
-will be too wide to detect anything and K has to rise, with cost rising in step.
-This is the most likely reason the budget estimate proves wrong.
+**~~K=5 may not be enough.~~ Resolved 2026-08-01, and the risk was pointing the
+wrong way.** Run-to-run variance has been *zero* in every batch measured, not
+high, so K does not have to rise and the budget estimate is safe from this
+direction. The real exposure is the one that replaced it: intervals will be too
+wide to detect anything **because the corpus is small**, and K cannot fix that.
+At the v1 cap of 15 fixtures the corpus half-width is about ±0.24, and the
+locality tiers the headline result is broken out by hold five fixtures each, at
+roughly ±0.38. Raising K does not move either number; raising the fixture count
+moves both, linearly. This belongs in the README beside the first percentage.
 
 **~~Prompt-cache prefix sharing may not survive the Agent SDK.~~ Resolved
 2026-07-25.** It does not survive as an *explicit* breakpoint — the Agent SDK
@@ -671,11 +736,17 @@ can reasonably go.
       **Resolved 2026-07-25.** No — `system_prompt` is a single string. The
       agentic reviewer does **not** drop to a hand-rolled Client SDK tool loop:
       measured cost did not justify it. Cost-controls table corrected.
-- [ ] Is K=5 sufficient? **Reframed 2026-07-25.** The pilot found recall
-      variance to be zero (detection 1.00 across 34 runs), so K cannot be chosen
-      from it; what varies is the non-seeded findings, i.e. precision. K is
-      therefore a precision question and cannot be settled until fixtures carry
-      distractors. Deferred to the end of Phase 1, measured on `TS-0001`.
+- [x] ~~Is K=5 sufficient?~~ **Resolved 2026-08-01: yes, and not for the reason
+      the question assumed.** Reframed on 2026-07-25 as a precision question,
+      since recall variance was zero across 34 pilot runs. Precision was then
+      measured on `TS-0001` and is *also* zero — 0.00 in all ten runs, 0 true
+      positives in 29 hand-labelled findings. Both metrics sit on a boundary, so
+      no observed variance exists to choose K from, and the bootstrap that was
+      supposed to expose it returns ±0.00 at every K. K=5 stands on the
+      clustering arithmetic instead, and rates moved to exact intervals so a
+      boundary result stops reporting false certainty. See
+      `results/precision/README.md`. Revocable on a named trigger: the first
+      batch whose per-run scores are not constant.
 - [x] ~~Does a reviewer see only the diff, or the whole repo?~~ **Resolved
       2026-07-24.** Floor is diff + touched files, identical across modes;
       agentic ceiling is read-only repo navigation; execution deferred against a

@@ -30,10 +30,25 @@ measurement's *second* result matters more than its first. The proximity matcher
 scored the defect found 10 times out of 10 and every match was a false positive
 — all 29 findings landed on the defect's own lines while describing three
 different bugs. DESIGN predicted line matching would fail by producing false
-*negatives*; this is the inverse, at full strength, and it means **K cannot be
-settled on the crude matcher**. Precision over the stored runs needs either hand
-labels or Phase 3's judge brought forward. That is the one thing standing
-between here and the Phase 1 gate.
+*negatives*; this is the inverse, at full strength.
+
+**K is settled at 5** (2026-08-01, no new spend — the same 10 runs, hand-labelled
+finding by finding). Precision came back 0.00 in all ten runs, so precision
+variance is degenerate exactly as recall variance was in Phase 0, and for the
+same underlying reason: **every fixture measured to date sits on a boundary, and
+the bootstrap DESIGN specifies returns ±0.00 over a constant sample at every K.**
+Rather than reword the gate a third time, the estimator was fixed — rates now
+get exact intervals, so 0/10 reads `[0.00, 0.31]` — and K was settled on the
+clustering arithmetic, which does not depend on this fixture's numbers: repeat
+runs of one fixture are worth `1/(1 + (K-1)ρ)` of an independent observation, and
+at the ρ this project keeps observing they are worth nothing. **Corpus size, not
+K, is the binding constraint on every published width**, and per-fixture
+confidence intervals turn out to be unpublishable at any affordable K — 0/5
+against 5/5 still overlaps. See
+[results/precision/README.md](results/precision/README.md).
+
+Phase 1 has three tasks left, none of them measurements: strengthen `TS-0001`'s
+distractors, make history-stripping a build step, and delete `pilot/`.
 
 **Budget:** The DESIGN goal of "full sweep under $50" refers to the Phase 6
 publication sweep. Development spend across Phases 0–5 is separate and estimated
@@ -170,12 +185,46 @@ Before Phase 1, these must be true:
       inverse, at full strength, and it is a ready-made adversarial case for the
       Phase 3 judge — a judge that scores these 29 as matches is not fit to
       adjudicate the corpus, and the pairs are already on disk.)
-- [ ] Measure precision variance on `TS-0001` *with* its distractor and settle K.
-      Carried over from the Phase 0 gate. **Blocked on a matcher, not on runs:**
-      the 10 stored runs already contain the finding sets, but precision over
-      them is exactly what the 10/10 false-positive result shows proximity
-      cannot compute. Either hand-label the finding sets or bring Phase 3's
-      judge forward; do not settle K on the crude matcher.
+- [x] Measure precision variance on `TS-0001` *with* its distractor and settle K.
+      (completed 2026-08-01 — scored from the existing 10 runs, no new spend.
+      All 29 findings hand-labelled; labels, reasoning and the full argument in
+      [results/precision/README.md](results/precision/README.md).)
+      **Precision is 0.00 in all ten runs — 0 true positives in 29 findings —
+      so precision variance is degenerate and cannot settle K either.** That is
+      the Phase 0 result from the opposite end: recall was pinned at 1.00 there,
+      precision at 0.00 here, and a percentile bootstrap over a constant sample
+      returns `[0.00, 0.00]` at *every* K. Reading that as "one run suffices"
+      would have chosen K off a measurement that measured nothing.
+      Two things changed rather than one.
+      **Estimators** (`assay.eval.interval`, 34 tests): a rate now gets an exact
+      Clopper–Pearson interval, defined at 0/n and n/n, so 0/10 reports
+      `[0.00, 0.31]` rather than `[0.00, 0.00]`. The bootstrap stays for means
+      of per-run values, where it is correct, and carries a `degenerate` flag so
+      a collapsed interval cannot print as a precise one. Every batch this
+      project has measured has been constant, so this is the common case.
+      **The basis for K:** K runs of one fixture are a cluster, not K
+      independent observations, so they add information divided by
+      `1 + (K-1)ρ`. At 15 fixtures and ρ=0.8, K=5→20 moves the corpus
+      half-width from ±0.240 to ±0.233 — four times the spend for 0.007 — and
+      at ρ=1.0, which is what every batch measured so far looks like, K buys
+      exactly nothing. Corpus size multiplies the same quantity linearly.
+      **K stays 5**, now justified rather than provisional, with a stated
+      trigger to re-measure: the first batch whose per-run scores are *not*
+      constant. `assay.eval.precision` exits non-zero on a degenerate batch so
+      that flag cannot be missed.
+- [x] Score precision from labels, not proximity. (completed 2026-08-01 —
+      `assay.eval.precision`, 23 tests, all offline. Takes a label per finding
+      (`defect:<id>` / `distractor:<kind>` / `other`) and **refuses a batch that
+      is not fully labelled**: an unlabelled finding leaves the denominator and
+      raises precision for no reason but unfinished work. Labels are validated
+      against the fixture's own answer key, so a one-keystroke typo in a defect
+      id is an error rather than a silent false positive. A run that reported
+      nothing has *no* precision and leaves the mean — scoring silence as 0.00
+      punishes it and 1.00 rewards it — but stays in the recall denominator,
+      where finding nothing is a real outcome. `partition_runs` moved into
+      `assay.corpus.locality` so both modules share one definition of which runs
+      count; two definitions is how a denominator comes to differ between two
+      reports of the same batch.)
 
 #### Blockers raised by the 2026-07-26 QA review
 These gate Phase 1 completion. The first is the project's stated highest-severity
@@ -340,19 +389,20 @@ because Phase 1 reuses the pilot harness for locality verification and the K run
       fixture is doing exactly the job the v1 question needs; if they do not it
       is too hard rather than too easy, and gets reworked for the opposite
       reason. NOTES.md says so rather than quietly banking the 0.00 as a pass.)
-- [ ] **Strengthen `TS-0001`'s distractors, after K is settled.** Measured
-      2026-07-31: across 10 runs the stale-batch-timestamp bait was matched once
-      and the other two never, so the authored distractors are close to
-      decoration and precision against them conveys little. The same runs handed
-      over better bait for free — every run independently raised
-      release-before-claim and non-idempotent-retry, both defensible, both on
-      the change under review, both not the seeded defect, and both *arguable*
-      rather than merely tempting. Deferred deliberately: adding a distractor
-      changes what precision means, and K is measured on this fixture's
-      precision variance, so changing the bait and measuring variance in one
-      pass would mix the two. Order is settle K → strengthen → re-measure.
-      Candidates recorded in `TS-0001/NOTES.md` so the next pass need not
-      rediscover them.
+- [ ] **Strengthen `TS-0001`'s distractors.** *Unblocked 2026-08-01 — K is
+      settled, so the ordering constraint that deferred this is discharged.*
+      Hand-labelled across the 10 runs: stale-batch-timestamp bitten 1/10,
+      logged-and-continued-error 1/10, redundant-empty-batch-return 0/10. The
+      authored bait is close to decoration and precision against it conveys
+      little. The same runs handed over better bait for free — every run
+      independently raised release-before-claim and non-idempotent-retry, both
+      defensible, both on the change under review, both not the seeded defect,
+      and both *arguable* rather than merely tempting. Candidates recorded in
+      `TS-0001/NOTES.md`.
+      Note what re-measuring can and cannot show: single-shot precision here is
+      already 0.00 and cannot go lower, so stronger bait changes the *finding
+      mix*, not this fixture's single-shot score. The number it will move is the
+      agentic one, which is Phase 2's.
 - [ ] Strip git history from fixture repos as a build step, not a manual habit.
       (Partly closed 2026-07-26 from the other end: `assert_isolated` refuses a
       fixture with surviving history at load, and `test_corpus_fixtures.py` fails
@@ -379,12 +429,29 @@ because Phase 1 reuses the pilot harness for locality verification and the K run
 
 ### Phase 1 Readiness Gate
 Before Phase 2, these must be true:
-- [ ] **K is chosen and justified by observed precision variance** on `TS-0001`
-      with its distractor. Inherited from the Phase 0 gate, which could not meet
-      it — see FINDINGS. Choose the acceptable CI half-width *before* reading the
-      numbers. **The runs exist** (10 single-shot, stored); what is missing is a
-      matcher trustworthy enough to compute precision over them, which the
-      2026-07-31 10/10 false-positive result rules out for proximity.
+- [x] ~~**K is chosen and justified by observed precision variance** on
+      `TS-0001` with its distractor.~~ **Measured 2026-08-01, and the condition
+      is unmeetable for the second time — closed on a different basis, stated.**
+      Precision was 0.00 in all ten runs (0 true positives in 29 hand-labelled
+      findings), so the observed variance is zero and the bootstrap returns
+      ±0.00 at every K. The Phase 0 gate failed this way on recall; this is the
+      same failure from the other end, and the pattern is now understood rather
+      than worked around: **every fixture measured to date sits on a boundary,
+      and a bootstrap over a constant sample is not an interval.**
+      K is therefore settled on the clustering arithmetic instead —
+      `1 + (K-1)ρ`, which makes K=5→20 worth at most 0.014 of corpus
+      half-width and worth nothing at the ρ=1.0 every batch has shown — with
+      exact intervals replacing the bootstrap for rates so a boundary result
+      reports its real uncertainty. **K = 5.** The re-measure trigger is named
+      and enforced in code rather than remembered: the first batch whose per-run
+      scores are not constant. Full argument and the K table:
+      [results/precision/README.md](results/precision/README.md).
+      The pre-registration this condition asked for was **not** honoured, and
+      saying so is part of closing it: these ten runs had already been read on
+      2026-07-31 for locality, so the labels were applied to findings that had
+      been seen. The arithmetic that settles K does not depend on `TS-0001`'s
+      numbers at all, which is the only reason it is usable — and it is the
+      reason no acceptable half-width was chosen after the fact to fit them.
 - [x] `TS-0001`'s locality tag is verified by measurement, not asserted.
       (2026-07-31 — `cross_file`, 0/10, `verified: true`. The author's argument
       was that the evidence lives in `reservation-repo.ts`, untouched by the
@@ -529,9 +596,23 @@ cost.
 - `assay score` and `assay report` CLI commands.
 
 ### Tasks
-- [ ] Implement per-reviewer precision and recall.
+- [ ] Implement per-reviewer precision and recall. **Import
+      `assay.eval.precision`, do not re-implement it** — it already fixes the
+      denominator (silence has no precision; unlabelled findings are refused,
+      not skipped), and a second definition is how two reports of one batch come
+      to disagree.
 - [ ] Implement panel-level metrics over deduplicated findings.
-- [ ] Implement bootstrap 95% CIs across K runs.
+- [x] ~~Implement bootstrap 95% CIs across K runs.~~ **Landed early, in Phase 1,
+      and not as specified** (2026-08-01, `assay.eval.interval`). Rates get exact
+      Clopper–Pearson intervals; the bootstrap is kept for means of per-run
+      values and flags a constant sample as degenerate. Phase 4 imports this
+      module rather than writing its own — the reason `review_floor` lives in
+      `assay.corpus.locality`, for the same reason.
+- [ ] Publish per-fixture rates as **bare counts with no interval**, and make
+      difference claims only over the aggregated corpus. Per-fixture CI
+      non-overlap — DESIGN's original rule — cannot resolve even 0/5 against
+      5/5, so a per-fixture table carrying intervals would report "no
+      difference" whatever happened.
 - [ ] Implement the locality breakdown (`local` / `touched_file` / `cross_file`).
 - [ ] Implement regression detection as CI non-overlap between two runs.
 - [ ] Implement the report generator, stamping model ID, date, corpus hash, K,
@@ -621,7 +702,9 @@ published run ID.
 | Answer-key leakage into reviewer context | Critical — all numbers invalid, silently | Low **→ raised 2026-07-26, lowered furthest 2026-07-30**: the pilot harness enforced nothing beyond `cwd`; `assay.executor` now denies those calls by default, and a live confined run has been *observed* refusing a planted bait read with the canary absent from the transcript | Executor path confinement (default-deny, symlink- and `..`-resolving); history-free fixtures; isolation test treated as correctness-critical and re-run whenever executor or layout changes. **Re-run `assay.executor.probe` on every `claude-agent-sdk` upgrade** — the deny is honoured by a dependency, so it can regress with no change here and no test would notice. **Keep auditing transcripts for out-of-`repo/` paths after every run batch**: the audit is what established the pilot's own numbers were clean |
 | Judge agreement too low to trust | Critical — blocks the project | Medium | Phase 3 readiness gate stops work; revise judge, never the labels |
 | Matching inflates recall by scoring plausible-but-wrong findings on the defect's own lines | Critical — a spurious match looks like a good result, where a missed one visibly depresses recall | **High — observed 2026-07-31**: on `TS-0001`, 29 of 29 findings fell inside the proximity window and none described the seeded defect (10/10 by matcher, 0/10 by hand) | Proximity is a filter, never a decision — nothing scores a match on it alone. Locality tags settled against it must record that they were hand-labelled. **The judge's validation set must include this shape**, or a judge that rubber-stamps "same lines, plausible bug" scores perfectly against it; those 29 findings are committed as a ready-made adversarial slice |
-| Run-to-run variance swamps signal; K must rise | High — cost scales with K | Medium | Measured in Phase 0 before anything is built on an assumed K |
+| An interval reports false certainty at the boundary | Critical — a published `0.00 ±0.00` claims precision nobody measured, and it is the *common* case here | **Was certain, now closed 2026-08-01**: every batch measured to date is constant (34/34, 0/10, precision 0.00 ×10), and the specified bootstrap returns ±0.00 for all of them at every K | Rates use exact Clopper–Pearson intervals, defined at 0/n and n/n; the bootstrap is retained only for means of per-run values and sets a `degenerate` flag on a constant sample; `assay.eval.precision` exits non-zero on a degenerate batch. **Do not add a normal-approximate interval anywhere** — it has the same zero-width failure, less visibly |
+| Run-to-run variance swamps signal; K must rise | Low — the opposite risk turned out to be the real one | **Resolved 2026-08-01**: variance has been *zero* in every batch, not large. K's leverage is bounded by clustering (`1 + (K-1)ρ`), so K=5→20 buys ≤0.014 of half-width | K=5, justified by that arithmetic; re-measure on the first batch whose per-run scores are not constant, a trigger enforced by the tool rather than remembered |
+| Corpus too small for the intervals to say anything | **High — quantified 2026-08-01**: 15 fixtures gives ±0.24 overall and roughly ±0.38 per locality tier, and DESIGN's headline is *broken out by locality*. ±0.15 needs ~45 fixtures and is unreachable at any K | Certain at the v1 cap | Publish the width beside every rate rather than the rate alone; state the cap before any percentage; per-fixture rates ship as bare counts. Raising the cap is post-v1 work, and it is the only lever that moves this |
 | Agent SDK blocks prefix caching | Medium — agentic cost rises | Medium | Measured in Phase 0; fallback is a Client SDK tool loop for the agentic reviewer |
 | Corpus too small or biased for numbers to mean much | Medium — limits claims, not correctness | High | Stated plainly in README before any percentage; contribution path for external fixtures |
 | Fixture authoring expands without limit | Medium — v1 never ships | High | 15 is a hard v1 cap; further fixtures are post-v1 work |

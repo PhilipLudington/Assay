@@ -103,7 +103,9 @@ positives. They converge on three concerns, none of which is the seeded defect:
   Says "double release", but the mechanism is retry-after-partial-failure and
   it needs an exception; the seeded defect fires on the happy path.
 - **Summary accounting.** `processed`/`failed` are not incremented on the
-  already-settled branch. Unrelated.
+  already-settled branch. Unrelated to the defect — and, unlike the other two,
+  it survives the defect's fix, which is why it became a declared distractor on
+  2026-08-01. See *Distractors* below.
 
 Seven of ten runs recommend "claim via `markExpired` first, then release the
 lines" as the fix. Under the seeded defect that reordering still decrements
@@ -133,41 +135,95 @@ lands, this fixture's *difficulty* is measured only from below.
 
 ## Distractors
 
-Three, all in the new file, all deliberately away from the defect's lines so a
-proximity-gated match cannot confuse one for the other: a batch timestamp
-sampled once (check-then-act bait), a caught-logged-and-continued failure
-(swallowed-error bait), and a redundant early return on an empty batch
-(dead-code bait). Each is defensible as correct — the notes in `fixture.yaml`
-say why — and each is the kind of finding a reviewer emits when it has nothing
-better to say. Their strength is itself a measurement: if no reviewer ever bites,
-they are decoration and precision stays trivially near 1.0.
+Four. Three were authored with the fixture; the fourth was declared on
+2026-08-01, after measurement showed the code had been carrying it all along.
+Each is defensible as correct — the notes in `fixture.yaml` say why — and each
+is the kind of finding a reviewer emits when it has nothing better to say.
+Their strength is itself a measurement: if no reviewer ever bites, they are
+decoration and precision stays trivially near 1.0.
 
-**Measured 2026-07-31, and they are weak.** Across ten single-shot runs,
-hand-labelled finding by finding: stale-batch-timestamp bitten 1/10,
-logged-and-continued-error 1/10, redundant-empty-batch-return 0/10. The authored
-bait is close to decoration.
+### The authored three are weak
 
-The proximity matcher had put that first number at 1/10 and the other two at
-0/10, and it was right by luck rather than by reading. Neither bite it could see
-was the one a reader attributes: the logged-and-continued bite (run 5) argues
-that failed reservations are left pending with no backoff or dead-letter path —
-that is the swallowed-error bait, taken squarely — while citing lines 38–46
-rather than the catch block at 65–74. Proximity filed it nowhere. This is the
-same lesson as the 10/10 detection false positive, in miniature: where a finding
+**Measured 2026-07-31.** Across ten single-shot runs, hand-labelled finding by
+finding: stale-batch-timestamp **0/10**, logged-and-continued-error **1/10**,
+redundant-empty-batch-return **0/10**. All three sit deliberately away from the
+defect's lines so a proximity-gated match cannot confuse one for the other, and
+all three are close to decoration.
+
+The proximity matcher scored those first two the other way round — 1/10 and 0/10
+— and where it agreed on a total it was right by luck rather than by reading.
+Neither bite it could see was the one a reader attributes:
+
+- The logged-and-continued bite (run 5) argues that failed reservations are left
+  pending with no backoff or dead-letter path — the swallowed-error bait, taken
+  squarely — while citing lines 38–46 rather than the catch block at 65–74.
+  Proximity filed it nowhere.
+- The stale-timestamp "bite" (run 6) sits on the bait's own lines but argues
+  that `findDueForExpiry` selects rows without locking them, so two sweepers
+  both release the same lines. That is the ordering concern in multi-worker
+  dress, not a stale clock, and it was demoted to `other` on 2026-08-01 by the
+  test below.
+
+Same lesson as the 10/10 detection false positive, in miniature: where a finding
 points and what it is about are different questions.
 
-The same runs handed over much better bait for free. Every run independently
-raised **release-before-claim** and **non-idempotent retry** (described above),
-and both are exactly what a distractor is supposed to be: defensible-sounding,
-located on the change under review, and not the seeded defect. They are also
-strictly harder than the authored three, because they are arguable rather than
-merely tempting — a reviewer that flags them is reasoning, not padding.
+### The fourth was already in the code
 
-Folding them in was deferred so that changing the bait and measuring K's
-precision variance would not happen in the same pass. **K was settled on
-2026-08-01** (see PLAN Phase 1 and `results/precision/README.md`), so that
-ordering constraint is discharged and this is now unblocked. Recorded here so
-the next authoring pass does not have to rediscover the candidates.
+Seven of ten runs objected that a row `markExpired` reports already settled is
+counted in neither `processed` nor `failed`. It is the most-bitten piece of bait
+in the fixture by a wide margin, and the manifest said nothing about it. It is
+now declared as `uncounted-settled-row`. Nothing in `repo/` changed; the answer
+key was incomplete, not the tree.
+
+It is also the best distractor here for the question v1 asks, because its
+exculpatory evidence is **outside the review floor**. `JobRunSummary` in
+`src/jobs/job.ts` defines `processed` as "rows the job successfully dealt with"
+and `failed` as "rows it tried and could not" — a row somebody else settled is
+neither, and `sweep.completed` already logs `due` beside both counters so the
+gap is recoverable. A single-shot reviewer cannot open that file and can only
+argue from shape. An agentic one can open it and decline the bait. The bait
+mirrors the seeded defect, whose *inculpatory* evidence is out of the floor the
+same way.
+
+### Why release-before-claim and non-idempotent retry are *not* distractors
+
+Every run raised both, and an earlier reading of these results (recorded in PLAN)
+proposed folding them in as stronger bait. That was wrong, and the reason is
+worth keeping as an authoring rule for the rest of the corpus.
+
+**The test: apply the stated fix and see what is left.** The fix is deleting the
+sweeper's release loop.
+
+| Concern | After the fix | Verdict |
+|---|---|---|
+| Release-before-claim | markExpired returning `null` releases nothing; no ordering left to get wrong | dies with the fix |
+| Non-idempotent retry | no partial release to retry over; markExpired is one transaction | dies with the fix |
+| Uncounted settled rows | the branch still counts nothing | **survives** |
+
+A concern that dies with the fix is the seeded defect's own harm under a
+different description — not an independent fact about the code. Declaring it a
+distractor would assert in the answer key that a reviewer flagging that line is
+*wrong*, when it is right about the line and wrong about the mechanism. `other`
+says exactly that and is the correct label. Only a concern that survives the fix
+can carry a not-a-defect argument of its own, which is what a distractor is.
+
+The rule also demotes run 6's stale-timestamp attribution, which the labels file
+had already flagged as its most arguable call: the double release it names is
+the release loop's, so it dies with the fix too.
+
+Neither relabelling moves precision. A distractor bite and an unseeded finding
+are both false positives, so this fixture stays at 0/29 exactly; only the bite
+tally moves. Labels and the full argument:
+`results/precision/TS-0001-20260731T170244Z.finding-labels.json`.
+
+### What is still not known
+
+Single-shot precision here is 0.00 and cannot go lower, so no rework of the bait
+can move this fixture's single-shot score. The number that will move is the
+agentic one, which Phase 2 owns. If agentic precision comes back near 1.0 — the
+reviewer declining every bait — the bait is too weak after all and authored bait
+gets added to `repo/`, which is a tree change and re-opens the locality
+measurement. Nothing is added speculatively before that number exists.
 
 ## Precision: measured 2026-08-01, and it is the floor
 

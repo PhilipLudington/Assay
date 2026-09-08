@@ -47,8 +47,20 @@ confidence intervals turn out to be unpublishable at any affordable K — 0/5
 against 5/5 still overlaps. See
 [results/precision/README.md](results/precision/README.md).
 
-Phase 1 has three tasks left, none of them measurements: strengthen `TS-0001`'s
-distractors, make history-stripping a build step, and delete `pilot/`.
+**`TS-0001`'s bait was stronger than its answer key said** (2026-08-01, no new
+spend, no change to `repo/`). The authored three distractors measured weak
+(0/10, 1/10, 0/10), but seven of ten runs bit an *undeclared* one — the
+already-settled branch that increments neither counter — which is now declared.
+It is the best distractor in the fixture for the v1 question, because the
+evidence that exonerates it sits outside the review floor, so tools can decline
+the bait and no-tools cannot. The pass also produced an authoring rule the rest
+of the corpus needs: **a distractor must survive the defect's fix.** Release-
+before-claim and non-idempotent retry — the two candidates this PLAN previously
+named — both die with the fix, so they are the defect's harm re-described, not
+bait, and stay labelled `other`.
+
+Phase 1 has two tasks left, neither a measurement: make history-stripping a
+build step, and delete `pilot/`.
 
 **Budget:** The DESIGN goal of "full sweep under $50" refers to the Phase 6
 publication sweep. Development spend across Phases 0–5 is separate and estimated
@@ -57,6 +69,47 @@ at roughly $20–25. Total project ceiling ~$75.
 **Effort basis:** Estimates are days of directed agent-built work (design,
 direction, and review by Philip; implementation by Claude Code under the 8-agent
 QA gate), not solo hand-coding days.
+
+---
+
+## Next Up
+
+Found issues, worked between PRs and ahead of phase work. Each is one branch off
+`main` and one PR.
+
+- [ ] **Manifest validation accepts duplicate distractor `kind`s.**
+      `src/assay/corpus/manifest.py` rejects duplicate *defect* ids but has no
+      analogue for distractors — verified 2026-09-08 by appending a copy of
+      `stale-batch-timestamp` to `TS-0001`'s manifest and loading it clean.
+      It matters because the two scorers key bites differently:
+      `assay.eval.precision` keys on `kind`, so two same-kind distractors merge
+      into one counter and become indistinguishable in a label file, while
+      `assay.corpus.locality` keys on `distractor-{i}:{kind}` and does not — so
+      the two reports would disagree about how many distractors a fixture has.
+      Fix: mirror the duplicate-defect-id validator, plus a rejection test in
+      `tests/test_manifest.py`. Phase 5 authors twelve more fixtures by hand,
+      which is when this gets hit. (qa-review 2026-09-08)
+- [ ] **Give "a distractor must survive the defect's fix" an executable form.**
+      The rule was adopted 2026-08-01 and is enforced by prose only. It is not
+      derivable from `change.patch`: that patch adds `reservation-sweeper.ts`
+      whole, so reversing it deletes the file rather than producing the fixed
+      tree, and the fix itself ("delete the release loop") exists only in
+      `fixture.yaml`'s `description:`. Candidate: ship a `fix.patch` beside
+      `change.patch` and assert that applying it to a copy of `repo/` removes
+      the defect's cited text while leaving every distractor's intact. Decide
+      before authoring resumes — it is a corpus-format change, so it is
+      cheapest now and most expensive at fifteen fixtures. (qa-review 2026-09-08)
+- [ ] **Anchor ground-truth line ranges to their code, not just to a file.**
+      `loader._assert_location_exists` checks only that the range is inside the
+      file, so a location can drift onto different lines and still load. For
+      `TS-0001` this is currently unreachable — its distractors sit in a file
+      `change.patch` adds whole, so any edit fails the patch-reversal check
+      (verified 2026-09-08 by inserting a line, which was rejected). The hole
+      is real for a *future* fixture whose ground truth sits in a
+      partially-patched file, where reversal tolerates hunk offsets. Fix: an
+      optional `anchor:` regex on `Location` that `_assert_location_exists`
+      matches. Do this before Phase 5 authoring, for the same reason as above.
+      (qa-review 2026-09-08)
 
 ---
 
@@ -389,20 +442,47 @@ because Phase 1 reuses the pilot harness for locality verification and the K run
       fixture is doing exactly the job the v1 question needs; if they do not it
       is too hard rather than too easy, and gets reworked for the opposite
       reason. NOTES.md says so rather than quietly banking the 0.00 as a pass.)
-- [ ] **Strengthen `TS-0001`'s distractors.** *Unblocked 2026-08-01 — K is
-      settled, so the ordering constraint that deferred this is discharged.*
-      Hand-labelled across the 10 runs: stale-batch-timestamp bitten 1/10,
-      logged-and-continued-error 1/10, redundant-empty-batch-return 0/10. The
-      authored bait is close to decoration and precision against it conveys
-      little. The same runs handed over better bait for free — every run
-      independently raised release-before-claim and non-idempotent-retry, both
-      defensible, both on the change under review, both not the seeded defect,
-      and both *arguable* rather than merely tempting. Candidates recorded in
-      `TS-0001/NOTES.md`.
-      Note what re-measuring can and cannot show: single-shot precision here is
-      already 0.00 and cannot go lower, so stronger bait changes the *finding
-      mix*, not this fixture's single-shot score. The number it will move is the
-      agentic one, which is Phase 2's.
+- [x] **Strengthen `TS-0001`'s distractors.** (completed 2026-08-01 — no new
+      spend, no change to `repo/`.) The authored three were measured weak —
+      stale-batch-timestamp 0/10, logged-and-continued-error 1/10,
+      redundant-empty-batch-return 0/10 — and precision against them conveyed
+      little. **The strengthening was already in the tree: the answer key was
+      incomplete, not the fixture.** Seven of the ten runs objected that a row
+      `markExpired` reports already settled is counted in neither `processed`
+      nor `failed`. That is now declared as `uncounted-settled-row`, the
+      most-bitten bait in the fixture by a wide margin, and it is the best one
+      here for the v1 question because its *exculpatory* evidence sits outside
+      the review floor: `JobRunSummary` in `src/jobs/job.ts` defines both
+      counters such that a row someone else settled is neither. A single-shot
+      reviewer cannot open that file; an agentic one can, and can decline the
+      bait. It mirrors the seeded defect, whose inculpatory evidence is out of
+      the floor the same way.
+      **This entry previously named release-before-claim and non-idempotent
+      retry as the candidates to fold in. That was wrong**, and the correction
+      is the reusable part. Apply the stated fix — delete the sweeper's release
+      loop — and see what is left: both of those concerns *die with the fix*,
+      because they are the seeded defect's own harm under a different
+      mechanism. Declaring them distractors would put in the answer key that a
+      reviewer flagging that line is wrong, when it is right about the line and
+      wrong about why; `other` says exactly that. The uncounted-settled-row
+      branch survives the fix, which is what earns a not-a-defect argument of
+      its own. **Survive-the-fix is now the authoring rule for Phase 5**, and it
+      also demoted run 6's stale-timestamp attribution — the labels file's own
+      most-arguable call — to `other`.
+      Nothing measured moved: precision stays 0/29 exactly (a distractor bite
+      and an unseeded finding are both false positives) and the locality verdict
+      re-scores unchanged at `SURVIVED cross_file 0/10 SETTLED`. Both were
+      re-run for free against the amended key rather than assumed. The two bite
+      tallies now disagree by construction — proximity says `1,0,0,5`, labels
+      say `0,1,0,7` — which is the same where-it-points versus what-it-argues
+      split this fixture has produced at every level; the label tally is the one
+      to quote.
+      Still open, and deliberately not pre-empted: single-shot precision here is
+      0.00 and cannot go lower, so no bait changes this fixture's single-shot
+      score. If Phase 2's *agentic* precision comes back near 1.0, the bait is
+      too weak after all and authored bait goes into `repo/` — a tree change
+      that re-opens the locality measurement, which is why none was added
+      speculatively.
 - [ ] Strip git history from fixture repos as a build step, not a manual habit.
       (Partly closed 2026-07-26 from the other end: `assert_isolated` refuses a
       fixture with surviving history at load, and `test_corpus_fixtures.py` fails

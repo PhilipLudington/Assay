@@ -42,9 +42,27 @@ reason but unfinished work.
 
 | Date | Fixture | Reviewer | Precision | Recall | Distractor bites |
 |---|---|---|---|---|---|
-| 2026-07-31 | TS-0001 | single-shot, floor, no tools | **0.00**, 0/29 findings, exact `[0.00, 0.12]` | 0.00, 0/10 runs, exact `[0.00, 0.31]` | 1/10, 1/10, 0/10 |
+| 2026-07-31 | TS-0001 | single-shot, floor, no tools | **0.00**, 0/29 findings, exact `[0.00, 0.12]` | 0.00, 0/10 runs, exact `[0.00, 0.31]` | uncounted-settled-row 7/10; logged-and-continued-error 1/10; stale-batch-timestamp 0/10; redundant-empty-batch-return 0/10 |
 
 Scored 2026-08-01 from the locality batch; no new runs were bought.
+
+The bite column was `1/10, 1/10, 0/10` when first published and changed the same
+day, without a run being re-run. `TS-0001` gained a fourth declared distractor —
+`uncounted-settled-row`, bitten 7/10 and undeclared until then — and one earlier
+attribution was demoted to `other`. **Precision did not move and could not**: a
+distractor bite and an unseeded finding are both false positives, so 0/29 is
+0/29 either way. Only the tally of which bait is working changed. The reasoning,
+including the survive-the-fix test that decides what may be called a distractor,
+is in `corpus/ts/TS-0001-reservation-double-release/NOTES.md` and in the
+`_amended_2026_08_01` block of the labels file.
+
+Note the two bite tallies disagree on purpose. In declaration order —
+stale-batch-timestamp, logged-and-continued-error, redundant-empty-batch-return,
+uncounted-settled-row — `assay.corpus.locality` attributes by proximity and
+reports `1/10, 0/10, 0/10, 5/10`; `assay.eval.precision`
+attributes by label and reports `0/10, 1/10, 0/10, 7/10`. Proximity files a
+finding by where it points, a label by what it argues, and on this fixture those
+are demonstrably different questions. **The label tally is the one to quote.**
 
 ## The collapse, and why it settled K differently than planned
 

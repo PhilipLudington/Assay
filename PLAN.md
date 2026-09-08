@@ -47,8 +47,20 @@ confidence intervals turn out to be unpublishable at any affordable K — 0/5
 against 5/5 still overlaps. See
 [results/precision/README.md](results/precision/README.md).
 
-Phase 1 has three tasks left, none of them measurements: strengthen `TS-0001`'s
-distractors, make history-stripping a build step, and delete `pilot/`.
+**`TS-0001`'s bait was stronger than its answer key said** (2026-08-01, no new
+spend, no change to `repo/`). The authored three distractors measured weak
+(0/10, 1/10, 0/10), but seven of ten runs bit an *undeclared* one — the
+already-settled branch that increments neither counter — which is now declared.
+It is the best distractor in the fixture for the v1 question, because the
+evidence that exonerates it sits outside the review floor, so tools can decline
+the bait and no-tools cannot. The pass also produced an authoring rule the rest
+of the corpus needs: **a distractor must survive the defect's fix.** Release-
+before-claim and non-idempotent retry — the two candidates this PLAN previously
+named — both die with the fix, so they are the defect's harm re-described, not
+bait, and stay labelled `other`.
+
+Phase 1 has two tasks left, neither a measurement: make history-stripping a
+build step, and delete `pilot/`.
 
 **Budget:** The DESIGN goal of "full sweep under $50" refers to the Phase 6
 publication sweep. Development spend across Phases 0–5 is separate and estimated
@@ -389,20 +401,47 @@ because Phase 1 reuses the pilot harness for locality verification and the K run
       fixture is doing exactly the job the v1 question needs; if they do not it
       is too hard rather than too easy, and gets reworked for the opposite
       reason. NOTES.md says so rather than quietly banking the 0.00 as a pass.)
-- [ ] **Strengthen `TS-0001`'s distractors.** *Unblocked 2026-08-01 — K is
-      settled, so the ordering constraint that deferred this is discharged.*
-      Hand-labelled across the 10 runs: stale-batch-timestamp bitten 1/10,
-      logged-and-continued-error 1/10, redundant-empty-batch-return 0/10. The
-      authored bait is close to decoration and precision against it conveys
-      little. The same runs handed over better bait for free — every run
-      independently raised release-before-claim and non-idempotent-retry, both
-      defensible, both on the change under review, both not the seeded defect,
-      and both *arguable* rather than merely tempting. Candidates recorded in
-      `TS-0001/NOTES.md`.
-      Note what re-measuring can and cannot show: single-shot precision here is
-      already 0.00 and cannot go lower, so stronger bait changes the *finding
-      mix*, not this fixture's single-shot score. The number it will move is the
-      agentic one, which is Phase 2's.
+- [x] **Strengthen `TS-0001`'s distractors.** (completed 2026-08-01 — no new
+      spend, no change to `repo/`.) The authored three were measured weak —
+      stale-batch-timestamp 0/10, logged-and-continued-error 1/10,
+      redundant-empty-batch-return 0/10 — and precision against them conveyed
+      little. **The strengthening was already in the tree: the answer key was
+      incomplete, not the fixture.** Seven of the ten runs objected that a row
+      `markExpired` reports already settled is counted in neither `processed`
+      nor `failed`. That is now declared as `uncounted-settled-row`, the
+      most-bitten bait in the fixture by a wide margin, and it is the best one
+      here for the v1 question because its *exculpatory* evidence sits outside
+      the review floor: `JobRunSummary` in `src/jobs/job.ts` defines both
+      counters such that a row someone else settled is neither. A single-shot
+      reviewer cannot open that file; an agentic one can, and can decline the
+      bait. It mirrors the seeded defect, whose inculpatory evidence is out of
+      the floor the same way.
+      **This entry previously named release-before-claim and non-idempotent
+      retry as the candidates to fold in. That was wrong**, and the correction
+      is the reusable part. Apply the stated fix — delete the sweeper's release
+      loop — and see what is left: both of those concerns *die with the fix*,
+      because they are the seeded defect's own harm under a different
+      mechanism. Declaring them distractors would put in the answer key that a
+      reviewer flagging that line is wrong, when it is right about the line and
+      wrong about why; `other` says exactly that. The uncounted-settled-row
+      branch survives the fix, which is what earns a not-a-defect argument of
+      its own. **Survive-the-fix is now the authoring rule for Phase 5**, and it
+      also demoted run 6's stale-timestamp attribution — the labels file's own
+      most-arguable call — to `other`.
+      Nothing measured moved: precision stays 0/29 exactly (a distractor bite
+      and an unseeded finding are both false positives) and the locality verdict
+      re-scores unchanged at `SURVIVED cross_file 0/10 SETTLED`. Both were
+      re-run for free against the amended key rather than assumed. The two bite
+      tallies now disagree by construction — proximity says `1,0,0,5`, labels
+      say `0,1,0,7` — which is the same where-it-points versus what-it-argues
+      split this fixture has produced at every level; the label tally is the one
+      to quote.
+      Still open, and deliberately not pre-empted: single-shot precision here is
+      0.00 and cannot go lower, so no bait changes this fixture's single-shot
+      score. If Phase 2's *agentic* precision comes back near 1.0, the bait is
+      too weak after all and authored bait goes into `repo/` — a tree change
+      that re-opens the locality measurement, which is why none was added
+      speculatively.
 - [ ] Strip git history from fixture repos as a build step, not a manual habit.
       (Partly closed 2026-07-26 from the other end: `assert_isolated` refuses a
       fixture with surviving history at load, and `test_corpus_fixtures.py` fails

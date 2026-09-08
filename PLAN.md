@@ -72,6 +72,47 @@ QA gate), not solo hand-coding days.
 
 ---
 
+## Next Up
+
+Found issues, worked between PRs and ahead of phase work. Each is one branch off
+`main` and one PR.
+
+- [ ] **Manifest validation accepts duplicate distractor `kind`s.**
+      `src/assay/corpus/manifest.py` rejects duplicate *defect* ids but has no
+      analogue for distractors — verified 2026-09-08 by appending a copy of
+      `stale-batch-timestamp` to `TS-0001`'s manifest and loading it clean.
+      It matters because the two scorers key bites differently:
+      `assay.eval.precision` keys on `kind`, so two same-kind distractors merge
+      into one counter and become indistinguishable in a label file, while
+      `assay.corpus.locality` keys on `distractor-{i}:{kind}` and does not — so
+      the two reports would disagree about how many distractors a fixture has.
+      Fix: mirror the duplicate-defect-id validator, plus a rejection test in
+      `tests/test_manifest.py`. Phase 5 authors twelve more fixtures by hand,
+      which is when this gets hit. (qa-review 2026-09-08)
+- [ ] **Give "a distractor must survive the defect's fix" an executable form.**
+      The rule was adopted 2026-08-01 and is enforced by prose only. It is not
+      derivable from `change.patch`: that patch adds `reservation-sweeper.ts`
+      whole, so reversing it deletes the file rather than producing the fixed
+      tree, and the fix itself ("delete the release loop") exists only in
+      `fixture.yaml`'s `description:`. Candidate: ship a `fix.patch` beside
+      `change.patch` and assert that applying it to a copy of `repo/` removes
+      the defect's cited text while leaving every distractor's intact. Decide
+      before authoring resumes — it is a corpus-format change, so it is
+      cheapest now and most expensive at fifteen fixtures. (qa-review 2026-09-08)
+- [ ] **Anchor ground-truth line ranges to their code, not just to a file.**
+      `loader._assert_location_exists` checks only that the range is inside the
+      file, so a location can drift onto different lines and still load. For
+      `TS-0001` this is currently unreachable — its distractors sit in a file
+      `change.patch` adds whole, so any edit fails the patch-reversal check
+      (verified 2026-09-08 by inserting a line, which was rejected). The hole
+      is real for a *future* fixture whose ground truth sits in a
+      partially-patched file, where reversal tolerates hunk offsets. Fix: an
+      optional `anchor:` regex on `Location` that `_assert_location_exists`
+      matches. Do this before Phase 5 authoring, for the same reason as above.
+      (qa-review 2026-09-08)
+
+---
+
 ## Phase 0: Pilot — resolve the empirical unknowns
 
 **Goal:** Answer the three questions that would otherwise be guessed, using

@@ -46,10 +46,11 @@ real proximity gate and the semantic judge. Here, a finding is attributed to the
 as a detection only if the nearest one is the defect and it is within `--window`
 lines. Nearest-wins rather than a plain window because `TS-0001`'s distractors
 sit as close as 1 line from the defect, and a fixed ±15 window would score a
-distractor bite as a detection. Ties go to the defect: over-counting detections can only
-*refute* a `cross_file` claim, and a false `cross_file` claim is the failure this
-step exists to catch, so the bias points away from it. Pass `--labels` to
-overrule the matcher by hand; the verdict records how many runs were labelled.
+distractor bite as a detection. Ties go to the defect: over-counting detections
+can only *refute* a `cross_file` claim, and a false `cross_file` claim is the
+failure this step exists to catch, so the bias points away from it. Pass
+`--labels` to overrule the matcher by hand; the verdict records how many runs
+were labelled.
 
 Run it, then re-score for free::
 

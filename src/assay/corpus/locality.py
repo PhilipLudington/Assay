@@ -45,8 +45,8 @@ real proximity gate and the semantic judge. Here, a finding is attributed to the
 *nearest* ground-truth item in the same file — defect or distractor — and counts
 as a detection only if the nearest one is the defect and it is within `--window`
 lines. Nearest-wins rather than a plain window because `TS-0001`'s distractors
-sit 7 lines from the defect, and a fixed ±15 window would score a distractor
-bite as a detection. Ties go to the defect: over-counting detections can only
+sit as close as 1 line from the defect, and a fixed ±15 window would score a
+distractor bite as a detection. Ties go to the defect: over-counting detections can only
 *refute* a `cross_file` claim, and a false `cross_file` claim is the failure this
 step exists to catch, so the bias points away from it. Pass `--labels` to
 overrule the matcher by hand; the verdict records how many runs were labelled.
@@ -89,7 +89,7 @@ from assay.cost import cost_usd
 MIN_RUNS_TO_VERIFY = 10
 
 #: Lines of slack when attributing a finding to a ground-truth location. Small
-#: on purpose: `TS-0001`'s nearest distractor is 7 lines from the defect, so a
+#: on purpose: `TS-0001`'s nearest distractor is 1 line from the defect, so a
 #: wide window would let nearest-wins attribution degrade back into guessing.
 DEFAULT_WINDOW = 10
 
@@ -412,9 +412,14 @@ def attribute(
 
     Nearest-wins rather than a plain proximity window because a fixture's
     distractors are deliberately close to its defect — `TS-0001`'s nearest sits
-    7 lines away — so a window wide enough to tolerate a reviewer citing the
+    1 line away — so a window wide enough to tolerate a reviewer citing the
     call site instead of the guard would also swallow a distractor bite and
     score it as a detection.
+
+    Attribution is still only a filter. On `TS-0001` it files 5 of the 7
+    uncounted-settled-row bites correctly and leaves 2 on the defect, because a
+    finding that spans both ranges ties and the tie goes to the defect. The
+    label files are what settle a bite; this only narrows where to look.
 
     A tie resolves to the defect. That bias is deliberate and it points in the
     safe direction: an over-counted detection can only *refute* a `cross_file`

@@ -66,3 +66,28 @@ distractors:
       no-op for an empty array and the same summary is returned either way —
       so it is bait for a dead-code or duplicated-exit finding. Redundant is
       not incorrect, and taste is not a defect class.
+  # Declared 2026-08-01, after ten runs bit it 7/10 while the manifest said
+  # nothing about it. It was in the code from the start; what was missing was
+  # the answer key's account of it. See NOTES.md, "Distractors".
+  - kind: uncounted-settled-row
+    location:
+      file: src/jobs/reservation-sweeper.ts
+      lines: [53, 56]
+    note: >-
+      A row that `markExpired` reports already settled is counted in neither
+      `processed` nor `failed`, so `processed + failed < due.length` and a
+      batch of entirely-settled rows returns `{processed: 0, failed: 0}`.
+      That reads as lost accounting and it is the single most-bitten piece of
+      bait in this fixture. It is not a defect: `JobRunSummary` in
+      `src/jobs/job.ts` defines `processed` as "rows the job successfully
+      dealt with" and `failed` as "rows it tried and could not", and a row
+      another actor settled between the fetch and the claim is neither. It is
+      metered on its own counter (`sweep.already_settled`), and the gap is not
+      hidden — `sweep.completed` logs `due` beside both counters, so
+      `due - processed - failed` is the settled count.
+      The exculpatory evidence is deliberately outside the review floor. A
+      single-shot reviewer cannot read `job.ts` and can only argue from the
+      shape; an agentic one can open it and decline the bait. This distractor
+      therefore discriminates on exactly the axis v1 exists to measure, and it
+      mirrors the seeded defect, whose *inculpatory* evidence is out of the
+      floor in the same way.

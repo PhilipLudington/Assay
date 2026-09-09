@@ -11,6 +11,7 @@ numbers, and nothing about the output looks wrong.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -22,6 +23,46 @@ from assay.corpus.taxonomy import DefectClass, Locality, Severity
 
 class ManifestError(ValueError):
     """Raised when a manifest is unusable. Never downgraded to a warning."""
+
+
+#: The vocabulary an identity may be spelled from. `re.fullmatch`, never `$`:
+#: Python's `$` also matches *before* a trailing newline, so `^[A-Za-z0-9._-]+$`
+#: would admit the `kind: |` block scalar this rule exists to catch.
+_TOKEN = re.compile(r"[A-Za-z0-9._-]+")
+
+
+def _bare_token(value: str, what: str) -> str:
+    """Rejects a name that is not spelled from the bare-token vocabulary.
+
+    Both of the manifest's identity fields — `Defect.id` and `Distractor.kind` —
+    are spelled by hand into a label file (`defect:<id>`, `distractor:<kind>`)
+    and compared as raw strings by the uniqueness validators below. That makes
+    the same failures apply to both: `""` names something with no name, and
+    `"x "` versus `"x"` are two identities that read as one, so a keystroke
+    nobody can see buys a duplicate past a uniqueness check and forces a label
+    file to carry the same invisible padding to score at all.
+
+    The rule is an **allowlist**, not a whitespace blacklist. A blacklist is the
+    obvious form and it does not hold: `str.isspace()` is False for U+200B ZERO
+    WIDTH SPACE, U+FEFF BOM and U+2060 WORD JOINER, and so is `\\s` — those are
+    the invisible characters an author is *most* likely to paste in from a
+    rendered document, and every one of them would buy the duplicate this
+    function exists to refuse. Naming what an identity may contain answers the
+    whole class at once; enumerating what it may not answers only the members
+    someone thought of. The colon is excluded deliberately: it is the label
+    delimiter, so a kind containing one produces `distractor:a:b`, which no
+    reader can parse back into a field and a value.
+
+    It is a rejection rather than a strip: stripping would accept the padded
+    manifest and then disagree with its own text, which is what a hand-written
+    label file is written against.
+    """
+    if not _TOKEN.fullmatch(value):
+        raise ValueError(
+            f"{what} must be a bare token of ASCII letters, digits, '.', '_' or '-', "
+            f"got {value!r}"
+        )
+    return value
 
 
 class Location(BaseModel):
@@ -82,12 +123,25 @@ class Defect(BaseModel):
     # populate_by_name so `class:` in YAML maps onto `defect_class` in Python.
     model_config = ConfigDict(extra="forbid", frozen=True, populate_by_name=True)
 
-    id: str
+    id: str = Field(description="Fixture id, a hyphen, and a suffix, e.g. TS-0001-d1")
     defect_class: Annotated[DefectClass, Field(alias="class")]
     severity: Severity
     locality: LocalityTag
     location: Location
     description: str = Field(min_length=20)
+
+    @field_validator("id")
+    @classmethod
+    def _id_is_a_bare_token(cls, value: str) -> str:
+        """A defect id is the corpus's *primary* label, so it is held to the token rule.
+
+        `assay.eval.precision` spells it `defect:<id>` and validates a label file
+        against these exact strings, so a padded id is only scorable by a label
+        file padded to match. Whether the suffix after the fixture prefix is
+        present at all is checked in `_ids_are_consistent_and_unique`, which is
+        the only place that knows the fixture's own id.
+        """
+        return _bare_token(value, "defect id")
 
 
 class Distractor(BaseModel):
@@ -107,21 +161,8 @@ class Distractor(BaseModel):
     @field_validator("kind")
     @classmethod
     def _kind_is_a_bare_token(cls, value: str) -> str:
-        """A kind is an identifier, so it may not be empty or carry whitespace.
-
-        It is the distractor's only name: `assay.eval.precision` spells it
-        `distractor:<kind>` in a hand-written label file, and the uniqueness rule
-        below compares kinds as strings. Unconstrained, `""` yields the label
-        `distractor:` for a bait with no name, and `"x "` and `"x"` are two kinds
-        that read as one — which defeats the uniqueness rule with a keystroke
-        nobody can see, and makes a label file that only scores if it carries the
-        same invisible trailing space.
-        """
-        if not value or any(character.isspace() for character in value):
-            raise ValueError(
-                f"distractor kind must be a non-empty token with no whitespace, got {value!r}"
-            )
-        return value
+        """A kind is the distractor's only name, so it is held to the token rule."""
+        return _bare_token(value, "distractor kind")
 
 
 class FixtureManifest(BaseModel):
@@ -161,12 +202,22 @@ class FixtureManifest(BaseModel):
 
     @model_validator(mode="after")
     def _ids_are_consistent_and_unique(self) -> FixtureManifest:
+        prefix = f"{self.id}-"
         seen: set[str] = set()
         for defect in self.defects:
-            if not defect.id.startswith(f"{self.id}-"):
+            if not defect.id.startswith(prefix):
                 raise ValueError(
                     f"defect id {defect.id!r} must be prefixed with the fixture id "
                     f"{self.id!r}, so a finding can be traced to its fixture"
+                )
+            if defect.id == prefix:
+                # The prefix alone names the fixture, not a defect in it. A
+                # one-defect fixture makes that look harmless; the moment a
+                # second defect is added there is nothing left to tell them
+                # apart, and `defect:TS-0001-` is a label that reads as a typo.
+                raise ValueError(
+                    f"defect id {defect.id!r} is the fixture prefix with no suffix; "
+                    f"it must name a specific defect, e.g. {prefix}d1"
                 )
             if defect.id in seen:
                 raise ValueError(f"duplicate defect id {defect.id!r}")

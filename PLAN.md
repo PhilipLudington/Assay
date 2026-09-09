@@ -110,8 +110,11 @@ Found issues, worked between PRs and ahead of phase work. Each is one branch off
       `kind: |` block-scalar ones are what pin the rule to `str.isspace()` —
       narrowing it to `" " in value` leaves the other four green. 276 tests
       green. The same-day review found `Defect.id` has the identical hole; that
-      is the next line.)
-- [ ] **Constrain `Defect.id` the same way `Distractor.kind` now is.**
+      is the next line. **Superseded 2026-09-09:** `str.isspace()` was itself
+      too narrow — it is False for the zero-width characters — and the rule is
+      now the allowlist described in the line below. The rejection-not-strip
+      reasoning above still stands and is why that rule is a `field_validator`.)
+- [x] **Constrain `Defect.id` the same way `Distractor.kind` now is.**
       `manifest.py:85` declares `id: str` with no constraint, and
       `_ids_are_consistent_and_unique` checks only the `TS-0001-` prefix and
       raw-string equality — so the hole just closed for `kind` is still open on
@@ -123,6 +126,46 @@ Found issues, worked between PRs and ahead of phase work. Each is one branch off
       `field_validator` on `Defect.id`, or `pattern=r"^TS-\d{4}-\S+$"`, plus
       rejection tests — and if both fields end up with the same rule, one shared
       validator rather than two copies. (qa-review 2026-09-09)
+      (completed 2026-09-09 — a shared `_bare_token` helper, since both fields
+      did end up with the same rule, plus an empty-suffix check in
+      `_ids_are_consistent_and_unique`: `TS-0001-` is non-empty and carries no
+      whitespace, so the token rule alone lets it through, and only the model
+      validator knows the fixture's own id.
+      **The rule landed as an allowlist, not the whitespace test this line and
+      the `kind` fix both specified** — that is the reusable part. The same-day
+      review found `str.isspace()` is False for U+200B ZERO WIDTH SPACE, U+FEFF
+      BOM and U+2060 WORD JOINER, and so is `\S`, so *both* fixes this line
+      offered had the identical hole, and it was the hole most likely to be hit:
+      those are the invisible characters an author pastes in from a rendered
+      document. Reproduced on both fields before fixing. `_bare_token` now names
+      what an identity may contain — ASCII letters, digits, `.`, `_`, `-` —
+      because an allowlist answers the whole class and a blacklist answers only
+      the members someone thought of. The colon is excluded on separate grounds:
+      it is the label delimiter, so `distractor:naming:inconsistency` cannot be
+      read back into a field and a value. It is `re.fullmatch`, not `re.match`
+      against `^...$`, because Python's `$` also matches *before* a trailing
+      newline and the anchored form silently re-admits the `kind: |` block
+      scalar. 291 tests green; five mutations each caught by the tests that
+      should catch them. The review also found a real defect in
+      `assay.eval.precision`; that is the next line.)
+- [ ] **Reject a repeated `run_index` in `assay.eval.precision`.**
+      `precision.py:207` reads `index = int(record.get("run_index", position))`
+      and trusts it to be unique, but nothing enforces it. Two scored runs
+      sharing a `run_index` make `finding_key` collide, so one run's labels
+      silently score another run's findings — and **both existing guards pass**:
+      `missing` sees the key present, and the `extra` check builds a *set* of
+      keys, which collapses the duplicates. Verified 2026-09-09 by reproduction,
+      not by reading: a two-run transcript with both `run_index: 0` and the
+      single label `0:0` scored `true_positives=1` on *both* runs, so a finding
+      no human ever labelled counted as a hit for the seeded defect with no
+      error raised. The trigger is two batches concatenated, which is exactly
+      how a re-run gets appended. It matters more than the manifest holes it was
+      found beside: those corrupt an answer key that a person reads, this
+      corrupts a published number that nobody re-reads. `assay.corpus.locality`
+      keys the same way (`locality.py:596`), so the fix belongs in one shared
+      place, next to the `distractor_key` line below. Fix: refuse a duplicate
+      `run_index` the way `manifest.py` refuses a duplicate defect id.
+      (qa-review 2026-09-09)
 - [ ] **Give "a distractor must survive the defect's fix" an executable form.**
       The rule was adopted 2026-08-01 and is enforced by prose only. It is not
       derivable from `change.patch`: that patch adds `reservation-sweeper.ts`
@@ -169,6 +212,15 @@ Found issues, worked between PRs and ahead of phase work. Each is one branch off
       fetch. **No model call ever runs in CI** — scoring is zero-spend by design
       and a workflow that called the API would breach the budget silently.
       (qa-review 2026-09-08)
+      **The repo is not green on its own linters today, so decide what the job
+      runs before writing it** (measured 2026-09-09): `pytest` passes 291/291,
+      but `ruff check .` reports 20 errors and `mypy src tests` reports 36. All
+      20 ruff errors are in `pilot/`, which the task below deletes, so that half
+      resolves itself. The 36 mypy errors are in `tests/test_locality.py`,
+      `tests/test_pilot_scoring.py` and `tests/test_probe.py` — mostly bare
+      `dict` annotations — and would make the job red on its first run. Either
+      clear them first or scope the job to `pytest` plus `ruff`, and say which
+      in the workflow rather than discovering it on the first push.
 
 ---
 

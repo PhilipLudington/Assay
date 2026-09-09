@@ -121,6 +121,86 @@ def test_duplicate_defect_ids_are_rejected(tmp_path: Path) -> None:
         load_manifest(write(tmp_path, doubled))
 
 
+@pytest.mark.parametrize(
+    "bad_id",
+    [
+        '""',
+        '"   "',
+        '"TS-0001- d1"',
+        '"TS-0001-d1 "',
+        '"TS-0001-\\td1"',
+        '"TS-0001-d1\\u00a0"',
+        "|\n      TS-0001-d1",
+    ],
+    ids=[
+        "empty",
+        "blank",
+        "internal-space",
+        "trailing-space",
+        "tab",
+        "non-breaking-space",
+        "block-scalar-newline",
+    ],
+)
+def test_defect_id_must_be_a_bare_token(tmp_path: Path, bad_id: str) -> None:
+    """The defect id is the corpus's primary label and gets the same rule as `kind`.
+
+    `assay.eval.precision` spells it `defect:<id>` and validates a hand-written
+    label file against these exact strings, so `"TS-0001-d1 "` is only scorable
+    by a label file carrying the same invisible trailing space.
+
+    The parametrization mirrors the distractor-kind cases deliberately: both
+    fields go through one `_bare_token` helper, so the tab, the non-breaking
+    space and the `|` block scalar are what keep either field from being
+    narrowed to `" " in value` without a test going red.
+    """
+    text = VALID.replace("id: TS-0001-d1", f"id: {bad_id}")
+    with pytest.raises(ManifestError, match="non-empty token with no whitespace"):
+        load_manifest(write(tmp_path, text))
+
+
+def test_defect_id_of_bare_prefix_is_rejected(tmp_path: Path) -> None:
+    """`TS-0001-` passes the prefix check and the token rule, and names no defect.
+
+    This is the one hole the token rule does not cover: it is non-empty and
+    carries no whitespace. With one defect in the fixture it looks harmless;
+    with two there is nothing left to tell them apart, and `defect:TS-0001-`
+    reads as a truncated label rather than an identity.
+    """
+    text = VALID.replace("id: TS-0001-d1", 'id: "TS-0001-"')
+    with pytest.raises(ManifestError, match="fixture prefix with no suffix"):
+        load_manifest(write(tmp_path, text))
+
+
+def test_padded_defect_id_does_not_defeat_the_uniqueness_rule(tmp_path: Path) -> None:
+    """The token rule is what keeps `_ids_are_consistent_and_unique` honest.
+
+    Compared as raw strings, `"TS-0001-d1 "` and `"TS-0001-d1"` are distinct
+    ids, so a trailing space would have bought a duplicate defect past the
+    uniqueness validator — the same defeat a padded kind bought against the
+    distractor rule.
+    """
+    doubled = VALID.replace(
+        "distractors:",
+        textwrap.dedent(
+            """\
+              - id: "TS-0001-d1 "
+                class: async-race
+                severity: low
+                locality:
+                  tier: local
+                location:
+                  file: src/routes/shipments.ts
+                  lines: [90, 92]
+                description: >
+                  The first defect's id again, with a trailing space nobody can see.
+            distractors:"""
+        ),
+    )
+    with pytest.raises(ManifestError, match="non-empty token with no whitespace"):
+        load_manifest(write(tmp_path, doubled))
+
+
 def test_duplicate_distractor_kinds_are_rejected(tmp_path: Path) -> None:
     """`kind` is what the precision scorer keys bites on, so it must be unique.
 

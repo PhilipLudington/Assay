@@ -121,6 +121,25 @@ def test_duplicate_defect_ids_are_rejected(tmp_path: Path) -> None:
         load_manifest(write(tmp_path, doubled))
 
 
+def test_duplicate_distractor_kinds_are_rejected(tmp_path: Path) -> None:
+    """`kind` is what the precision scorer keys bites on, so it must be unique.
+
+    Two distractors sharing a kind merge into one counter in
+    `assay.eval.precision` and stay separate in `assay.corpus.locality`, so the
+    two reports of one batch would disagree about how many distractors the
+    fixture has.
+    """
+    doubled = VALID + (
+        "  - kind: naming-inconsistency\n"
+        "    location:\n"
+        "      file: src/routes/shipments.ts\n"
+        "      lines: [40, 44]\n"
+        "    note: A second distractor deliberately reusing the first one's kind.\n"
+    )
+    with pytest.raises(ManifestError, match="duplicate distractor kind"):
+        load_manifest(write(tmp_path, doubled))
+
+
 @pytest.mark.parametrize(
     "bad_path",
     ["/etc/passwd", "../fixture.yaml", "../../secrets.env"],

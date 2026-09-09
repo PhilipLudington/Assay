@@ -141,6 +141,62 @@ def test_duplicate_distractor_kinds_are_rejected(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
+    "bad_kind",
+    [
+        '""',
+        '"   "',
+        '"stale batch timestamp"',
+        '"naming-inconsistency "',
+        '"stale\\tbatch-timestamp"',
+        '"naming-inconsistency\\u00a0"',
+        "|\n      naming-inconsistency",
+    ],
+    ids=[
+        "empty",
+        "blank",
+        "internal-space",
+        "trailing-space",
+        "tab",
+        "non-breaking-space",
+        "block-scalar-newline",
+    ],
+)
+def test_distractor_kind_must_be_a_bare_token(tmp_path: Path, bad_kind: str) -> None:
+    """`kind` is the distractor's only name, so whitespace in it is not cosmetic.
+
+    An empty kind labels a nameless bait `distractor:` in
+    `assay.eval.precision`, and a label file can only score a padded kind by
+    carrying the same invisible padding.
+
+    The last three cases are the ones a space-only rule would miss. The rule is
+    `str.isspace()`, so it is the tab and the non-breaking space that prove it is
+    not `" " in value`; the block scalar is here because YAML hands `kind: |` back
+    with a trailing newline, which is the padded case an author reaches by
+    formatting rather than by typo.
+    """
+    text = VALID.replace("kind: naming-inconsistency", f"kind: {bad_kind}")
+    with pytest.raises(ManifestError, match="non-empty token with no whitespace"):
+        load_manifest(write(tmp_path, text))
+
+
+def test_padded_kind_does_not_defeat_the_uniqueness_rule(tmp_path: Path) -> None:
+    """The rejection above is what keeps `_distractor_kinds_are_unique` honest.
+
+    Compared as raw strings, `"x "` and `"x"` are distinct kinds, so a trailing
+    space would have bought a duplicate kind past the uniqueness validator.
+    """
+    padded = VALID + (
+        '  - kind: "naming-inconsistency "\n'
+        "    location:\n"
+        "      file: src/routes/shipments.ts\n"
+        "      lines: [40, 44]\n"
+        "    note: The first kind again, with a trailing space nobody can see.\n"
+    )
+    with pytest.raises(ManifestError, match="non-empty token with no whitespace"):
+        load_manifest(write(tmp_path, padded))
+
+
+@pytest.mark.parametrize(
     "bad_path",
     ["/etc/passwd", "../fixture.yaml", "../../secrets.env"],
 )

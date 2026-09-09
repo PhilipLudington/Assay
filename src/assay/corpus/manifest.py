@@ -100,9 +100,28 @@ class Distractor(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    kind: str
+    kind: str = Field(description="Bare token naming this bait, e.g. stale-batch-timestamp")
     location: Location
     note: str = Field(min_length=10, description="Why this is bait and why it is not a defect")
+
+    @field_validator("kind")
+    @classmethod
+    def _kind_is_a_bare_token(cls, value: str) -> str:
+        """A kind is an identifier, so it may not be empty or carry whitespace.
+
+        It is the distractor's only name: `assay.eval.precision` spells it
+        `distractor:<kind>` in a hand-written label file, and the uniqueness rule
+        below compares kinds as strings. Unconstrained, `""` yields the label
+        `distractor:` for a bait with no name, and `"x "` and `"x"` are two kinds
+        that read as one — which defeats the uniqueness rule with a keystroke
+        nobody can see, and makes a label file that only scores if it carries the
+        same invisible trailing space.
+        """
+        if not value or any(character.isspace() for character in value):
+            raise ValueError(
+                f"distractor kind must be a non-empty token with no whitespace, got {value!r}"
+            )
+        return value
 
 
 class FixtureManifest(BaseModel):

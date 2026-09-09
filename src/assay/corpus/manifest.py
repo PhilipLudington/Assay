@@ -154,6 +154,25 @@ class FixtureManifest(BaseModel):
             seen.add(defect.id)
         return self
 
+    @model_validator(mode="after")
+    def _distractor_kinds_are_unique(self) -> FixtureManifest:
+        """`kind` is a distractor's identity, and the two scorers disagree about it.
+
+        `assay.eval.precision` keys bites on `distractor:<kind>` alone, so two
+        distractors sharing a kind merge into one counter and a label file cannot
+        say which was bitten. `assay.corpus.locality` keys on
+        `distractor-<i>:<kind>`, which stays distinct. Both reports would be
+        internally consistent and disagree with each other about how many
+        distractors this fixture has — the shape of error the manifest exists to
+        make impossible.
+        """
+        seen: set[str] = set()
+        for distractor in self.distractors:
+            if distractor.kind in seen:
+                raise ValueError(f"duplicate distractor kind {distractor.kind!r}")
+            seen.add(distractor.kind)
+        return self
+
     @property
     def unverified_localities(self) -> list[str]:
         return [d.id for d in self.defects if not d.locality.verified]

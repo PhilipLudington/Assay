@@ -77,7 +77,7 @@ QA gate), not solo hand-coding days.
 Found issues, worked between PRs and ahead of phase work. Each is one branch off
 `main` and one PR.
 
-- [ ] **Manifest validation accepts duplicate distractor `kind`s.**
+- [x] **Manifest validation accepts duplicate distractor `kind`s.**
       `src/assay/corpus/manifest.py` rejects duplicate *defect* ids but has no
       analogue for distractors — verified 2026-09-08 by appending a copy of
       `stale-batch-timestamp` to `TS-0001`'s manifest and loading it clean.
@@ -89,6 +89,20 @@ Found issues, worked between PRs and ahead of phase work. Each is one branch off
       Fix: mirror the duplicate-defect-id validator, plus a rejection test in
       `tests/test_manifest.py`. Phase 5 authors twelve more fixtures by hand,
       which is when this gets hit. (qa-review 2026-09-08)
+      (completed 2026-09-09 — `_distractor_kinds_are_unique`, one rejection
+      test, 268 tests green. The same-day review of the fix found the field
+      itself is still unconstrained; that is the next line.)
+- [ ] **Constrain `Distractor.kind` itself, not just its uniqueness.**
+      `manifest.py:103` declares `kind: str` with no `min_length` and no strip,
+      unlike `note` (`min_length=10`) and `description` (`min_length=20`).
+      Verified 2026-09-09 by loading three manifests on the fix branch: `kind:
+      ""` loads clean and yields the label `distractor:` in
+      `precision.valid_labels`; `kind: "   "` loads; and `"naming-inconsistency
+      "` versus `"naming-inconsistency"` are accepted as two distinct kinds —
+      so **the uniqueness rule just added is defeated by a trailing space**, and
+      scoring that fixture would need a label file with a trailing space in it.
+      Fix: `Field(min_length=1, pattern=r"^\S+$")` or a strip-and-nonempty
+      `field_validator`, plus rejection tests. (qa-review 2026-09-09)
 - [ ] **Give "a distractor must survive the defect's fix" an executable form.**
       The rule was adopted 2026-08-01 and is enforced by prose only. It is not
       derivable from `change.patch`: that patch adds `reservation-sweeper.ts`
@@ -110,6 +124,17 @@ Found issues, worked between PRs and ahead of phase work. Each is one branch off
       optional `anchor:` regex on `Location` that `_assert_location_exists`
       matches. Do this before Phase 5 authoring, for the same reason as above.
       (qa-review 2026-09-08)
+- [ ] **Spell a distractor's identity one way, not two.** `assay.eval.precision`
+      names it `distractor:<kind>` (`precision.py:67,101,201`);
+      `assay.corpus.locality` names it `distractor-<i>:<kind>`
+      (`locality.py:379`). Rejecting duplicate kinds made the two schemes
+      *count* alike, which was the reported defect, but the two "Distractor
+      bites" tables (`precision.py:374`, `locality.py:776`) still print the same
+      distractor under two different names, so the two reports of one batch
+      cannot be joined or diffed by key. This is the same one-definition rule
+      that moved `partition_runs` into `assay.corpus.locality`. Fix: one
+      `distractor_key(kind)` helper in `assay.corpus`, used by both — `locality`
+      can drop the index now that kinds are unique. (qa-review 2026-09-09)
 - [ ] **Add CI, and keep it cheap.** The repo has no `.github/workflows` at all,
       which sits badly with a project whose value rests on numbers being
       reproducible: `tests/test_shipped_results.py` guards the published tallies,

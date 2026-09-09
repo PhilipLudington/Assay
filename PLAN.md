@@ -148,7 +148,7 @@ Found issues, worked between PRs and ahead of phase work. Each is one branch off
       scalar. 291 tests green; five mutations each caught by the tests that
       should catch them. The review also found a real defect in
       `assay.eval.precision`; that is the next line.)
-- [ ] **Reject a repeated `run_index` in `assay.eval.precision`.**
+- [x] **Reject a repeated `run_index` in `assay.eval.precision`.**
       `precision.py:207` reads `index = int(record.get("run_index", position))`
       and trusts it to be unique, but nothing enforces it. Two scored runs
       sharing a `run_index` make `finding_key` collide, so one run's labels
@@ -166,6 +166,44 @@ Found issues, worked between PRs and ahead of phase work. Each is one branch off
       place, next to the `distractor_key` line below. Fix: refuse a duplicate
       `run_index` the way `manifest.py` refuses a duplicate defect id.
       (qa-review 2026-09-09)
+      (completed 2026-09-09 — `run_indices` in `assay.corpus.locality`, called
+      by both scorers, next to `partition_runs` and for its reason. Reproduced
+      on the pre-fix tree first, and **the locality path was worse than this
+      line recorded**: one label `0:TS-0001-d1` read as `hits=2/2,
+      hand_labelled=2`, a detection rate of 1.00 from a single human judgement,
+      where precision's version at least needed the duplicate to carry a
+      finding. Precision's recall for the seeded defect came back
+      `1.00 [0.16, 1.00]` on one label.
+      The helper keeps the positional fallback both callers already had, so
+      *mixed* presence — one record carrying an index that another falls back
+      onto — is caught by the same rule instead of being the way around it. It
+      raises `ValueError` and each caller re-raises as its own type, because
+      `PrecisionError` is a `ValueError` and `LocalityError` a `RuntimeError`
+      and one shared exception would have broken one of the two contracts. The
+      check covers the runs that get *keyed*, not every record on file: a failed
+      or unparseable run carries no label, and refusing a batch over its index
+      would reject transcripts that score correctly — both are pinned by tests.
+      Both published results re-score unchanged. 297 tests green. The fix
+      exposed a different hole in the same field; that is the next line.)
+- [ ] **Decide what a malformed `run_index` is, not just a repeated one.**
+      `run_indices` (and `precision.score` before it) reaches the field with a
+      bare `int(...)`, so the *type* is unchecked while the uniqueness now is.
+      Verified 2026-09-09 by probing the helper directly: `run_index: null`
+      raises a bare `TypeError` that escapes both callers' `except ValueError`
+      wrap and surfaces as an unhandled crash, and `run_index: "first"` raises a
+      `ValueError` that gets re-labelled `PrecisionError: invalid literal for
+      int() with base 10` — an error that names the wrong problem to whoever
+      reads it. `run_index: 0.0` silently truncates to `0`, which is a *third*
+      way to collide with a run legitimately numbered 0 while passing the
+      duplicate check. Nothing in this repo writes such a transcript — `measure`
+      always writes an int — so this is a hand-edited or foreign-produced
+      transcript, which is exactly what re-scoring months later involves.
+      Deliberately left out of the duplicate-`run_index` fix: field
+      well-formedness is a different rule from cross-record uniqueness and needs
+      its own decision (reject outright, or fall back to position as an absent
+      field does?). Fix: decide the rule, enforce it in `run_indices` where the
+      field is already read once for both scorers, plus rejection tests for the
+      three shapes above. (found while fixing the line above, 2026-09-09)
 - [ ] **Give "a distractor must survive the defect's fix" an executable form.**
       The rule was adopted 2026-08-01 and is enforced by prose only. It is not
       derivable from `change.patch`: that patch adds `reservation-sweeper.ts`
@@ -213,8 +251,9 @@ Found issues, worked between PRs and ahead of phase work. Each is one branch off
       and a workflow that called the API would breach the budget silently.
       (qa-review 2026-09-08)
       **The repo is not green on its own linters today, so decide what the job
-      runs before writing it** (measured 2026-09-09): `pytest` passes 291/291,
-      but `ruff check .` reports 20 errors and `mypy src tests` reports 36. All
+      runs before writing it** (measured 2026-09-09, re-measured the same day
+      at 297/297): `pytest` passes, but `ruff check .` still reports 20 errors
+      and `mypy src tests` still reports 36 — neither count moved. All
       20 ruff errors are in `pilot/`, which the task below deletes, so that half
       resolves itself. The 36 mypy errors are in `tests/test_locality.py`,
       `tests/test_pilot_scoring.py` and `tests/test_probe.py` — mostly bare

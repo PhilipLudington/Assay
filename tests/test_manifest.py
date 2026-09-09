@@ -131,6 +131,9 @@ def test_duplicate_defect_ids_are_rejected(tmp_path: Path) -> None:
         '"TS-0001-\\td1"',
         '"TS-0001-d1\\u00a0"',
         "|\n      TS-0001-d1",
+        '"TS-0001-d1\\u200b"',
+        '"TS-0001-d1\\ufeff"',
+        '"TS-0001-d1:x"',
     ],
     ids=[
         "empty",
@@ -140,6 +143,9 @@ def test_duplicate_defect_ids_are_rejected(tmp_path: Path) -> None:
         "tab",
         "non-breaking-space",
         "block-scalar-newline",
+        "zero-width-space",
+        "byte-order-mark",
+        "label-delimiter",
     ],
 )
 def test_defect_id_must_be_a_bare_token(tmp_path: Path, bad_id: str) -> None:
@@ -150,12 +156,20 @@ def test_defect_id_must_be_a_bare_token(tmp_path: Path, bad_id: str) -> None:
     by a label file carrying the same invisible trailing space.
 
     The parametrization mirrors the distractor-kind cases deliberately: both
-    fields go through one `_bare_token` helper, so the tab, the non-breaking
-    space and the `|` block scalar are what keep either field from being
-    narrowed to `" " in value` without a test going red.
+    fields go through one `_bare_token` helper, and each group of cases pins a
+    different property of it. The tab, the NBSP and the `|` block scalar keep
+    the rule from being narrowed to `" " in value`. The zero-width space and the
+    BOM are why the rule is an allowlist at all: both are `str.isspace()`-False
+    and `\\s`-False, so any whitespace blacklist admits them. The colon pins the
+    one exclusion that is not about invisibility — it is the label delimiter, so
+    `defect:TS-0001-d1:x` cannot be read back into a field and a value.
+
+    The `match` names the field, not just the shared tail: `_bare_token` takes
+    `what` as an argument, so two call sites that had their arguments swapped
+    would otherwise point every author at the wrong field with every test green.
     """
     text = VALID.replace("id: TS-0001-d1", f"id: {bad_id}")
-    with pytest.raises(ManifestError, match="non-empty token with no whitespace"):
+    with pytest.raises(ManifestError, match="defect id must be a bare token"):
         load_manifest(write(tmp_path, text))
 
 
@@ -179,6 +193,15 @@ def test_padded_defect_id_does_not_defeat_the_uniqueness_rule(tmp_path: Path) ->
     ids, so a trailing space would have bought a duplicate defect past the
     uniqueness validator — the same defeat a padded kind bought against the
     distractor rule.
+
+    What this pins is the *ordering*, and it is worth being exact about: the
+    rejection comes from `Defect.id`'s field validator, which pydantic runs
+    while building the second defect, before `_ids_are_consistent_and_unique`
+    is ever reached. That is the point — the padded id never survives long
+    enough to be compared — so the assertion names the token rule rather than
+    the uniqueness message. Exact duplicates stay pinned by
+    `test_duplicate_defect_ids_are_rejected`, which is where the uniqueness
+    validator itself is exercised.
     """
     doubled = VALID.replace(
         "distractors:",
@@ -197,7 +220,7 @@ def test_padded_defect_id_does_not_defeat_the_uniqueness_rule(tmp_path: Path) ->
             distractors:"""
         ),
     )
-    with pytest.raises(ManifestError, match="non-empty token with no whitespace"):
+    with pytest.raises(ManifestError, match="defect id must be a bare token"):
         load_manifest(write(tmp_path, doubled))
 
 
@@ -230,6 +253,9 @@ def test_duplicate_distractor_kinds_are_rejected(tmp_path: Path) -> None:
         '"stale\\tbatch-timestamp"',
         '"naming-inconsistency\\u00a0"',
         "|\n      naming-inconsistency",
+        '"naming-inconsistency\\u200b"',
+        '"naming-inconsistency\\ufeff"',
+        '"naming:inconsistency"',
     ],
     ids=[
         "empty",
@@ -239,23 +265,29 @@ def test_duplicate_distractor_kinds_are_rejected(tmp_path: Path) -> None:
         "tab",
         "non-breaking-space",
         "block-scalar-newline",
+        "zero-width-space",
+        "byte-order-mark",
+        "label-delimiter",
     ],
 )
 def test_distractor_kind_must_be_a_bare_token(tmp_path: Path, bad_kind: str) -> None:
-    """`kind` is the distractor's only name, so whitespace in it is not cosmetic.
+    """`kind` is the distractor's only name, so what is in it is not cosmetic.
 
     An empty kind labels a nameless bait `distractor:` in
     `assay.eval.precision`, and a label file can only score a padded kind by
     carrying the same invisible padding.
 
-    The last three cases are the ones a space-only rule would miss. The rule is
-    `str.isspace()`, so it is the tab and the non-breaking space that prove it is
-    not `" " in value`; the block scalar is here because YAML hands `kind: |` back
-    with a trailing newline, which is the padded case an author reaches by
-    formatting rather than by typo.
+    Mirrors the defect-id parametrization case for case, because both fields go
+    through one `_bare_token` helper: the tab and the NBSP prove the rule is not
+    `" " in value`; the block scalar is the padded case an author reaches by
+    formatting rather than by typo, since YAML hands `kind: |` back with a
+    trailing newline; the zero-width space and the BOM are `str.isspace()`-False
+    and `\\s`-False, which is why the rule is an allowlist and not a blacklist;
+    and the colon is the label delimiter, so `distractor:naming:inconsistency`
+    could not be read back into a field and a value.
     """
     text = VALID.replace("kind: naming-inconsistency", f"kind: {bad_kind}")
-    with pytest.raises(ManifestError, match="non-empty token with no whitespace"):
+    with pytest.raises(ManifestError, match="distractor kind must be a bare token"):
         load_manifest(write(tmp_path, text))
 
 
@@ -272,7 +304,7 @@ def test_padded_kind_does_not_defeat_the_uniqueness_rule(tmp_path: Path) -> None
         "      lines: [40, 44]\n"
         "    note: The first kind again, with a trailing space nobody can see.\n"
     )
-    with pytest.raises(ManifestError, match="non-empty token with no whitespace"):
+    with pytest.raises(ManifestError, match="distractor kind must be a bare token"):
         load_manifest(write(tmp_path, padded))
 
 

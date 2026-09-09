@@ -11,6 +11,7 @@ numbers, and nothing about the output looks wrong.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -24,26 +25,43 @@ class ManifestError(ValueError):
     """Raised when a manifest is unusable. Never downgraded to a warning."""
 
 
+#: The vocabulary an identity may be spelled from. `re.fullmatch`, never `$`:
+#: Python's `$` also matches *before* a trailing newline, so `^[A-Za-z0-9._-]+$`
+#: would admit the `kind: |` block scalar this rule exists to catch.
+_TOKEN = re.compile(r"[A-Za-z0-9._-]+")
+
+
 def _bare_token(value: str, what: str) -> str:
-    """Rejects a name that is empty or carries whitespace anywhere.
+    """Rejects a name that is not spelled from the bare-token vocabulary.
 
     Both of the manifest's identity fields — `Defect.id` and `Distractor.kind` —
     are spelled by hand into a label file (`defect:<id>`, `distractor:<kind>`)
     and compared as raw strings by the uniqueness validators below. That makes
-    the same two failures apply to both: `""` names something with no name, and
+    the same failures apply to both: `""` names something with no name, and
     `"x "` versus `"x"` are two identities that read as one, so a keystroke
     nobody can see buys a duplicate past a uniqueness check and forces a label
     file to carry the same invisible padding to score at all.
 
-    The test is `str.isspace()` rather than `" " in value` or a `\\S` pattern,
-    because a tab, a non-breaking space, and the trailing newline YAML hands
-    back from a `|` block scalar are all padding an author reaches without
-    typing a space. It is a rejection rather than a strip: stripping would
-    accept the padded manifest and then disagree with its own text, which is
-    what a hand-written label file is written against.
+    The rule is an **allowlist**, not a whitespace blacklist. A blacklist is the
+    obvious form and it does not hold: `str.isspace()` is False for U+200B ZERO
+    WIDTH SPACE, U+FEFF BOM and U+2060 WORD JOINER, and so is `\\s` — those are
+    the invisible characters an author is *most* likely to paste in from a
+    rendered document, and every one of them would buy the duplicate this
+    function exists to refuse. Naming what an identity may contain answers the
+    whole class at once; enumerating what it may not answers only the members
+    someone thought of. The colon is excluded deliberately: it is the label
+    delimiter, so a kind containing one produces `distractor:a:b`, which no
+    reader can parse back into a field and a value.
+
+    It is a rejection rather than a strip: stripping would accept the padded
+    manifest and then disagree with its own text, which is what a hand-written
+    label file is written against.
     """
-    if not value or any(character.isspace() for character in value):
-        raise ValueError(f"{what} must be a non-empty token with no whitespace, got {value!r}")
+    if not _TOKEN.fullmatch(value):
+        raise ValueError(
+            f"{what} must be a bare token of ASCII letters, digits, '.', '_' or '-', "
+            f"got {value!r}"
+        )
     return value
 
 

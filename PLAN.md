@@ -110,6 +110,20 @@ Found issues, worked between PRs and ahead of phase work. Each is one branch off
       optional `anchor:` regex on `Location` that `_assert_location_exists`
       matches. Do this before Phase 5 authoring, for the same reason as above.
       (qa-review 2026-09-08)
+- [ ] **Add CI, and keep it cheap.** The repo has no `.github/workflows` at all,
+      which sits badly with a project whose value rests on numbers being
+      reproducible: `tests/test_shipped_results.py` guards the published tallies,
+      but only when someone runs it. **CI minutes count against the ~$75
+      ceiling**, so the workflow stays minimal: pull requests and pushes to
+      `main` only, one job, `ubuntu-latest`, one Python version, cached venv, and
+      `concurrency` with `cancel-in-progress` so a force-push does not leave a
+      superseded run burning minutes. No matrix — this is not a library with a
+      support matrix. The suite is 267 offline tests in ~3s, so nearly all the
+      cost is setup; optimize setup, not the tests. Run the TypeScript fixture
+      typecheck only when `corpus/**` changes, since it needs a network `npx`
+      fetch. **No model call ever runs in CI** — scoring is zero-spend by design
+      and a workflow that called the API would breach the budget silently.
+      (qa-review 2026-09-08)
 
 ---
 

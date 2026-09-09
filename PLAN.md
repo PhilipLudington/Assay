@@ -92,7 +92,7 @@ Found issues, worked between PRs and ahead of phase work. Each is one branch off
       (completed 2026-09-09 — `_distractor_kinds_are_unique`, one rejection
       test, 268 tests green. The same-day review of the fix found the field
       itself is still unconstrained; that is the next line.)
-- [ ] **Constrain `Distractor.kind` itself, not just its uniqueness.**
+- [x] **Constrain `Distractor.kind` itself, not just its uniqueness.**
       `manifest.py:103` declares `kind: str` with no `min_length` and no strip,
       unlike `note` (`min_length=10`) and `description` (`min_length=20`).
       Verified 2026-09-09 by loading three manifests on the fix branch: `kind:
@@ -103,6 +103,26 @@ Found issues, worked between PRs and ahead of phase work. Each is one branch off
       scoring that fixture would need a label file with a trailing space in it.
       Fix: `Field(min_length=1, pattern=r"^\S+$")` or a strip-and-nonempty
       `field_validator`, plus rejection tests. (qa-review 2026-09-09)
+      (completed 2026-09-09 — a `field_validator` rejecting empty-or-whitespace
+      rather than `pattern=` or a strip: a strip would accept the padded
+      manifest and then disagree with its own text, which is what a hand-written
+      label file is written against. Seven rejection cases; the tab, NBSP and
+      `kind: |` block-scalar ones are what pin the rule to `str.isspace()` —
+      narrowing it to `" " in value` leaves the other four green. 276 tests
+      green. The same-day review found `Defect.id` has the identical hole; that
+      is the next line.)
+- [ ] **Constrain `Defect.id` the same way `Distractor.kind` now is.**
+      `manifest.py:85` declares `id: str` with no constraint, and
+      `_ids_are_consistent_and_unique` checks only the `TS-0001-` prefix and
+      raw-string equality — so the hole just closed for `kind` is still open on
+      the *primary* label. Verified 2026-09-09 on the post-fix tree: `id:
+      "TS-0001-d1 "` loads and yields the label `defect:TS-0001-d1 ` in
+      `precision.valid_labels`; `id: "TS-0001-"` (empty suffix) loads; `id:
+      "TS-0001- d1"` loads. A padded defect id also slips a duplicate past the
+      uniqueness check, exactly as a padded kind did. Fix: the same bare-token
+      `field_validator` on `Defect.id`, or `pattern=r"^TS-\d{4}-\S+$"`, plus
+      rejection tests — and if both fields end up with the same rule, one shared
+      validator rather than two copies. (qa-review 2026-09-09)
 - [ ] **Give "a distractor must survive the defect's fix" an executable form.**
       The rule was adopted 2026-08-01 and is enforced by prose only. It is not
       derivable from `change.patch`: that patch adds `reservation-sweeper.ts`

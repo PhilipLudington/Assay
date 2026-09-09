@@ -227,6 +227,42 @@ def test_labels_are_keyed_by_recorded_run_index_not_by_position(fixture) -> None
     assert [r.run_index for r in report.runs] == [1, 2]
 
 
+def test_a_repeated_run_index_is_refused(fixture) -> None:  # type: ignore[no-untyped-def]
+    """Two runs sharing a key make one label score both of them.
+
+    Reproduced before the guard existed, on this exact batch: the single label
+    `0:0` scored `true_positives=1` on *both* runs and put the seeded defect's
+    recall at 1.00, because a finding no human labelled was counted as a hit.
+    The trigger is two batches concatenated, which is how a re-run gets
+    appended.
+
+    It needed its own check rather than a tweak to the other two, and this batch
+    is what shows why: the "unlabelled finding" guard sees the key present, and
+    the "label names a finding this batch does not have" guard builds a *set* of
+    keys, which collapses the duplicates back down. Both pass here — hence the
+    match on this error and not on either of theirs.
+    """
+    batch = transcript([run(0, 1), run(0, 1)])
+
+    with pytest.raises(PrecisionError, match="run_index repeated"):
+        score(fixture, batch, {finding_key(0, 0): "defect:TS-0001-d1"})
+
+
+def test_an_unparseable_run_may_share_an_index_with_a_scored_one(fixture) -> None:  # type: ignore[no-untyped-def]
+    """The rule guards the runs that get keyed, not every record on file.
+
+    An unparseable run's findings are unknown rather than empty, so it carries
+    no labels and never collides with one. Refusing the batch over its index
+    would reject transcripts that score correctly.
+    """
+    batch = transcript([run(0, 0, parse_error="no structured output"), run(0, 1)])
+
+    report = score(fixture, batch, {finding_key(0, 0): "other"})
+
+    assert report.scored == 1
+    assert report.unparseable == 1
+
+
 # --- the score itself --------------------------------------------------------
 
 

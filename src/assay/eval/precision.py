@@ -50,7 +50,7 @@ from pathlib import Path
 from typing import Any
 
 from assay.corpus.loader import Fixture, load_fixture
-from assay.corpus.locality import partition_runs
+from assay.corpus.locality import partition_runs, run_indices
 from assay.eval.interval import (
     Interval,
     bootstrap_mean,
@@ -196,6 +196,10 @@ def score(
     """
     runs = list(transcript.get("runs", []))
     billed, scored_runs = partition_runs(runs)
+    try:
+        indices = run_indices(scored_runs)
+    except ValueError as error:
+        raise PrecisionError(str(error)) from error
 
     defect_ids = [d.id for d in fixture.defects]
     bites: dict[str, int] = {f"{DISTRACTOR_PREFIX}{d.kind}": 0 for d in fixture.distractors}
@@ -203,8 +207,7 @@ def score(
 
     missing: list[str] = []
     scores: list[RunScore] = []
-    for position, record in enumerate(scored_runs):
-        index = int(record.get("run_index", position))
+    for index, record in zip(indices, scored_runs, strict=True):
         findings = [f for f in record.get("findings", []) if isinstance(f, dict)]
 
         true_positives = 0

@@ -31,6 +31,7 @@ from assay.corpus.locality import (
     ground_truth,
     normalise_path,
     review_floor,
+    run_indices,
     run_with_retries,
 )
 from assay.cost import UnknownModelError, cost_usd, price_for
@@ -487,6 +488,66 @@ def test_a_label_can_also_withdraw_a_match(tmp_path: Path) -> None:
 
     assert report.verdicts[0].hits == 0
     assert report.verdicts[0].status is Verdict.SURVIVED
+
+
+# --- run identity ------------------------------------------------------------
+
+
+def test_a_repeated_run_index_is_refused(tmp_path: Path) -> None:
+    """One label must not score two runs.
+
+    Reproduced before the guard existed: with both runs stamped `run_index: 0`,
+    the single label `0:TS-0001-d1` counted as two hits out of two scored runs
+    and `hand_labelled` read 2 — a detection rate of 1.00 derived from one human
+    judgement, with nothing raised.
+    """
+    fixture = load_fixture(build(tmp_path / "TS-0001"))
+    runs = clean_runs(2, [[finding("src/shipments.ts", 40, 40)], []])
+    runs[1]["run_index"] = 0
+
+    with pytest.raises(LocalityError, match="run_index repeated"):
+        classify(fixture, transcript(runs), labels={"0:TS-0001-d1": True})
+
+
+def test_a_failed_run_may_share_an_index_with_a_scored_one(tmp_path: Path) -> None:
+    """The rule guards the runs that get keyed, not every record on file.
+
+    A failed run is dropped everywhere and never carries a label, so refusing a
+    batch over its index would reject transcripts that score correctly.
+    """
+    fixture = load_fixture(build(tmp_path / "TS-0001"))
+    runs = clean_runs(2, [[], []])
+    runs[0].update({"failed": True, "error": "timeout"})
+    runs[1]["run_index"] = 0
+
+    report = classify(fixture, transcript(runs))
+
+    assert report.scored == 1
+    assert report.failed == 1
+
+
+def test_run_indices_falls_back_to_position_and_still_catches_a_collision() -> None:
+    """Mixed presence is a way to collide, not an escape from the check."""
+    assert run_indices([{}, {}, {}]) == [0, 1, 2]
+    assert run_indices([{"run_index": 7}, {"run_index": 3}]) == [7, 3]
+
+    # Position 1 has no `run_index`, so it falls back to 1 — which the first
+    # record already claims.
+    with pytest.raises(ValueError, match=r"run_index repeated in this batch: \[1\]"):
+        run_indices([{"run_index": 1}, {}])
+
+
+def test_every_repeated_index_is_named_not_just_the_first() -> None:
+    with pytest.raises(ValueError, match=r"\[2, 5\]"):
+        run_indices(
+            [
+                {"run_index": 5},
+                {"run_index": 2},
+                {"run_index": 5},
+                {"run_index": 2},
+                {"run_index": 9},
+            ]
+        )
 
 
 # --- distractors -------------------------------------------------------------

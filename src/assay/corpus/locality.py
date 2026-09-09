@@ -68,6 +68,7 @@ import hashlib
 import json
 import sys
 import time
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -472,6 +473,42 @@ def partition_runs(
     return billed, scored
 
 
+def run_indices(records: list[dict[str, Any]]) -> list[int]:
+    """The `run_index` of each record, refusing a batch that repeats one.
+
+    Every hand label in this project is keyed by run index — `<run>:<defect>`
+    here, `<run>:<finding>` in `assay.eval.precision` — so a repeated index is
+    not a cosmetic duplicate. It makes two runs share one key, and one human
+    judgement is then counted once per run that collides with it: a label
+    written about run 0 scores run 0's twin as well.
+
+    Neither module's existing guards see it. Precision's "unlabelled finding"
+    check finds the key present, and its "label names a finding this batch does
+    not have" check builds a *set* of keys, which collapses the duplicates back
+    down. So the batch scores clean and reports a rate nobody measured.
+
+    The trigger is mundane: two batches concatenated, which is how a re-run gets
+    appended to a transcript. Refused here rather than in either caller for the
+    same reason `partition_runs` lives here — one definition of which run is
+    which, or the two reports of one batch disagree about it.
+
+    Falls back to position when a record carries no `run_index` at all, which is
+    what both callers did before this check existed. Mixed presence is exactly a
+    way to collide, and it is caught by the same rule.
+    """
+    indices = [
+        int(record.get("run_index", position)) for position, record in enumerate(records)
+    ]
+    counts = Counter(indices)
+    repeated = sorted(index for index, count in counts.items() if count > 1)
+    if repeated:
+        raise ValueError(
+            f"run_index repeated in this batch: {repeated} — labels are keyed by "
+            "run index, so one label would score every run that shares it"
+        )
+    return indices
+
+
 # --- verdicts ----------------------------------------------------------------
 
 
@@ -573,6 +610,10 @@ def classify(
     # "found nothing" would depress detection and could turn a refutable
     # cross_file claim into a surviving one.
     billed, scored = partition_runs(runs)
+    try:
+        indices = run_indices(scored)
+    except ValueError as error:
+        raise LocalityError(str(error)) from error
 
     items = ground_truth(fixture)
     defects = [item for item in items if item.is_defect]
@@ -581,7 +622,7 @@ def classify(
     labelled: dict[str, int] = {item.id: 0 for item in defects}
     bites: dict[str, int] = {item.id: 0 for item in items if not item.is_defect}
 
-    for index, record in enumerate(scored):
+    for index, record in zip(indices, scored, strict=True):
         matched: set[str] = set()
         for finding in record.get("findings", []):
             if not isinstance(finding, dict):
@@ -593,7 +634,7 @@ def classify(
             if name in bites:
                 bites[name] += 1
         for target_defect in defects:
-            key = run_key(record.get("run_index", index), target_defect.id)
+            key = run_key(index, target_defect.id)
             if key in labels:
                 labelled[target_defect.id] += 1
                 was_found = bool(labels[key])

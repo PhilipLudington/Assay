@@ -490,15 +490,44 @@ def run_indices(records: list[dict[str, Any]]) -> list[int]:
     The trigger is mundane: two batches concatenated, which is how a re-run gets
     appended to a transcript. Refused here rather than in either caller for the
     same reason `partition_runs` lives here — one definition of which run is
-    which, or the two reports of one batch disagree about it.
+    which for the two *scorers*, or the two reports of one batch disagree about
+    it.
+
+    "For the two scorers" is meant literally, and is not yet the whole story:
+    `print_report` below derives its own run numbers, and the number it prints
+    is what a human copies into a `--labels` file. It prints the recorded
+    `run_index` where there is one — which is every transcript `measure` writes,
+    so the two agree in practice — but *falls back* to the record's position
+    among **all** runs, where this function falls back to the position among the
+    **scored** ones. On a record carrying no `run_index` the two disagree. That
+    divergence predates this helper and is queued in PLAN.md; until it is
+    closed, this function is the single definition of the keys labels are
+    *matched* against, not of the run numbers a reader is *shown*.
 
     Falls back to position when a record carries no `run_index` at all, which is
     what both callers did before this check existed. Mixed presence is exactly a
     way to collide, and it is caught by the same rule.
+
+    An index that is present but is not an integer is **refused, not coerced**.
+    Coercion is what makes a wrong number silent: `int(3.0)` re-keys the run from
+    `3.0` to `3`, so a label file written `"3.0:TS-0001-d1"` stops matching, and
+    since `classify` does not validate label keys the human's judgement is
+    dropped without a word and the crude matcher's verdict is published in its
+    place. `True` keying as `1` is the same hazard — `bool` is an `int` subclass,
+    so it is excluded explicitly. Refusing also keeps a JSON `null` inside each
+    caller's error contract, where a bare `TypeError` from `int()` would escape
+    both wraps.
     """
-    indices = [
-        int(record.get("run_index", position)) for position, record in enumerate(records)
-    ]
+    indices: list[int] = []
+    for position, record in enumerate(records):
+        raw = record.get("run_index", position)
+        if not isinstance(raw, int) or isinstance(raw, bool):
+            raise ValueError(
+                f"run_index must be an integer, got {raw!r} at position {position} "
+                "— an identity is taken as written or not at all, because coercing "
+                "one silently changes which run a label scores"
+            )
+        indices.append(raw)
     counts = Counter(indices)
     repeated = sorted(index for index, count in counts.items() if count > 1)
     if repeated:

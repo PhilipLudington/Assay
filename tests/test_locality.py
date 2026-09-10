@@ -25,6 +25,7 @@ from assay.corpus.locality import (
     MIN_RUNS_TO_VERIFY,
     LocalityError,
     Verdict,
+    assert_labels_match,
     attribute,
     classify,
     extract_findings,
@@ -488,6 +489,123 @@ def test_a_label_can_also_withdraw_a_match(tmp_path: Path) -> None:
 
     assert report.verdicts[0].hits == 0
     assert report.verdicts[0].status is Verdict.SURVIVED
+
+
+# --- labels that name nothing ------------------------------------------------
+
+
+def test_a_label_naming_a_run_the_batch_does_not_have_is_refused(tmp_path: Path) -> None:
+    """A label file is a human overruling the matcher; it must not miss quietly.
+
+    Before this check `classify` looked the key up, missed, and fell through to
+    the matcher — `hand_labelled` printed 0 and the matcher's verdict was
+    published as though nobody had judged the run at all.
+    """
+    fixture = load_fixture(build(tmp_path / "TS-0001"))
+    runs = clean_runs(2, [[finding("src/shipments.ts", 8, 8)], []])
+
+    with pytest.raises(LocalityError, match="name nothing in this batch"):
+        classify(fixture, transcript(runs), labels={"5:TS-0001-d1": True})
+
+
+def test_a_typoed_defect_id_is_refused_rather_than_silently_dropped(tmp_path: Path) -> None:
+    """One keystroke used to invert the published verdict with no error.
+
+    Measured on `TS-0001`'s shipped labels: spelling `-dl` for `-d1` drops all
+    ten human judgements, and the crude matcher those labels exist to overrule
+    scores the defect 10/10 — turning the published `SURVIVED cross_file 0/10`
+    into `REFUTED`. The only trace was `hand_labelled` falling to 0.
+    """
+    fixture = load_fixture(build(tmp_path / "TS-0001"))
+    runs = clean_runs(2, [[finding("src/shipments.ts", 8, 8)], []])
+
+    with pytest.raises(LocalityError, match=r"0:TS-0001-dl"):
+        classify(fixture, transcript(runs), labels={"0:TS-0001-dl": False})
+
+
+def test_a_label_naming_a_distractor_is_refused(tmp_path: Path) -> None:
+    """Labels overrule detection of *defects*; a distractor has no run key.
+
+    `ground_truth` names distractors `distractor-<i>:<kind>`, so such a key is
+    well-formed enough to look plausible in a hand-written file while matching
+    nothing `classify` ever looks up.
+    """
+    fixture = load_fixture(build(tmp_path / "TS-0001"))
+    runs = clean_runs(2, [[], []])
+
+    with pytest.raises(LocalityError, match="name nothing in this batch"):
+        classify(fixture, transcript(runs), labels={"0:distractor-1:stale-flag": True})
+
+
+def test_every_unmatched_label_is_named_not_just_the_first(tmp_path: Path) -> None:
+    """Fixing one typo at a time, a re-score per keystroke, is the slow failure."""
+    fixture = load_fixture(build(tmp_path / "TS-0001"))
+    runs = clean_runs(2, [[], []])
+
+    with pytest.raises(LocalityError) as caught:
+        classify(
+            fixture,
+            transcript(runs),
+            labels={"9:TS-0001-d1": True, "0:TS-0001-dl": False},
+        )
+
+    assert "9:TS-0001-d1" in str(caught.value)
+    assert "0:TS-0001-dl" in str(caught.value)
+
+
+def test_the_refusal_names_the_vocabulary_the_key_is_built_from(tmp_path: Path) -> None:
+    """The error has to be actionable: which runs exist, and which defect ids."""
+    fixture = load_fixture(build(tmp_path / "TS-0001"))
+    runs = clean_runs(3, [[], [], []])
+
+    with pytest.raises(LocalityError) as caught:
+        classify(fixture, transcript(runs), labels={"7:TS-0001-d1": True})
+
+    message = str(caught.value)
+    assert "0-2" in message
+    assert "TS-0001-d1" in message
+
+
+def test_commentary_keys_are_not_labels_and_are_not_refused(tmp_path: Path) -> None:
+    """`_`-prefixed keys carry the reasoning behind the judgements beside them.
+
+    The convention is `assay.eval.precision.load_labels`'s, and the shipped
+    label files use it. Enforcing it only in `main`, which strips such keys on
+    the way in, would leave every other caller — the shipped-results test
+    included — handing `classify` a file it refuses to read.
+    """
+    fixture = load_fixture(build(tmp_path / "TS-0001"))
+    runs = clean_runs(MIN_RUNS_TO_VERIFY, [[finding("src/shipments.ts", 8, 8)]] + [[]] * 9)
+
+    report = classify(
+        fixture,
+        transcript(runs),
+        labels={"_README": True, "_why_run_0_counts": False, "0:TS-0001-d1": False},
+    )
+
+    assert report.verdicts[0].hand_labelled == 1
+    assert report.verdicts[0].status is Verdict.SURVIVED
+
+
+def test_labels_against_a_batch_that_scored_nothing_say_so(tmp_path: Path) -> None:
+    """The empty case must not divide by an empty index range."""
+    fixture = load_fixture(build(tmp_path / "TS-0001"))
+    runs = clean_runs(1, [[]])
+    runs[0].update({"failed": True, "error": "timeout"})
+
+    with pytest.raises(LocalityError, match="no run scored"):
+        classify(fixture, transcript(runs), labels={"0:TS-0001-d1": True})
+
+
+def test_assert_labels_match_accepts_exactly_the_keys_run_key_builds(tmp_path: Path) -> None:
+    """The check is a set difference, so it is pinned directly as well."""
+    fixture = load_fixture(build(tmp_path / "TS-0001"))
+    defects = [item for item in ground_truth(fixture) if item.is_defect]
+
+    assert_labels_match({"0:TS-0001-d1": True, "1:TS-0001-d1": False}, [0, 1], defects)
+
+    with pytest.raises(LocalityError):
+        assert_labels_match({"2:TS-0001-d1": True}, [0, 1], defects)
 
 
 # --- run identity ------------------------------------------------------------

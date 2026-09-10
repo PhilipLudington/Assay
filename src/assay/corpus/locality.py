@@ -502,7 +502,10 @@ def run_indices(records: list[dict[str, Any]]) -> list[int]:
     **scored** ones. On a record carrying no `run_index` the two disagree. That
     divergence predates this helper and is queued in PLAN.md; until it is
     closed, this function is the single definition of the keys labels are
-    *matched* against, not of the run numbers a reader is *shown*.
+    *matched* against, not of the run numbers a reader is *shown*. What has
+    changed is the cost of being caught out by it: `assert_labels_match` below
+    now refuses a key that names no scored run, so copying the printed numbers
+    into a labels file raises rather than quietly scoring nothing.
 
     Falls back to position when a record carries no `run_index` at all, which is
     what both callers did before this check existed. Mixed presence is exactly a
@@ -510,10 +513,12 @@ def run_indices(records: list[dict[str, Any]]) -> list[int]:
 
     An index that is present but is not an integer is **refused, not coerced**.
     Coercion is what makes a wrong number silent: `int(3.0)` re-keys the run from
-    `3.0` to `3`, so a label file written `"3.0:TS-0001-d1"` stops matching, and
-    since `classify` does not validate label keys the human's judgement is
-    dropped without a word and the crude matcher's verdict is published in its
-    place. `True` keying as `1` is the same hazard — `bool` is an `int` subclass,
+    `3.0` to `3`, so a label file written `"3.0:TS-0001-d1"` stops matching. That
+    now raises through `assert_labels_match` rather than dropping the human's
+    judgement in silence, but the rule stays reject-not-coerce: an identity that
+    is re-keyed under the reader's feet is a wrong key made to look right, and
+    the point is to keep it as written. `True` keying as `1` is the same hazard —
+    `bool` is an `int` subclass,
     so it is excluded explicitly. Refusing also keeps a JSON `null` inside each
     caller's error contract, where a bare `TypeError` from `int()` would escape
     both wraps.
@@ -536,6 +541,54 @@ def run_indices(records: list[dict[str, Any]]) -> list[int]:
             "run index, so one label would score every run that shares it"
         )
     return indices
+
+
+def assert_labels_match(
+    labels: dict[str, bool], indices: list[int], defects: list[GroundTruth]
+) -> None:
+    """Refuses a label key naming no scored run, or no defect in the answer key.
+
+    `classify` used to look each key up, miss, and fall through to the matcher,
+    so a `--labels` file that named nothing changed nothing and *said* nothing.
+    That is the quiet half of every keying mismatch this module has had: a
+    repeated index or a coerced one is only dangerous because the label it
+    displaces disappears without a word.
+
+    Measured on `TS-0001`'s own shipped labels, which is why this raises rather
+    than warns. Typing `-dl` for `-d1` drops all ten human judgements and turns
+    the published `SURVIVED cross_file 0/10` into `REFUTED 10/10` — the crude
+    matcher's verdict, which the same ten labels exist to overrule. Numbering the
+    runs from 1, as a reader copying them off a report would, drops nine and
+    reports `REFUTED 1/10`. In both cases the only trace is `hand_labelled`
+    falling below the number of labels the file holds, and nothing reads it.
+
+    `assay.eval.precision` splits this check in two, because its keys and its
+    values carry different things: `load_labels` validates a label against the
+    fixture's answer key, and `score` refuses keys naming findings the batch does
+    not have. A locality key carries both halves at once
+    (``<run_index>:<defect_id>``), so one set difference answers both.
+
+    Keys prefixed with `_` are commentary and are skipped, the same convention
+    `assay.eval.precision.load_labels` documents: a label file is where the
+    reasoning behind a hand judgement lives, and it has to sit beside the labels
+    it explains. The skip belongs here rather than only in `main`, which strips
+    them on the way in, because the shipped label files carry commentary and
+    every other caller — `tests/test_shipped_results.py` included — hands
+    `classify` the file as read. A rule enforced in one of two entry points is
+    the shape of bug this module keeps closing.
+    """
+    expected = {run_key(index, defect.id) for index in indices for defect in defects}
+    unmatched = sorted(key for key in labels if key not in expected and key[:1] != "_")
+    if not unmatched:
+        return
+    span = f"{min(indices)}-{max(indices)}" if indices else "none — no run scored"
+    raise LocalityError(
+        f"{len(unmatched)} label(s) name nothing in this batch: {unmatched[:8]}"
+        + (" ..." if len(unmatched) > 8 else "")
+        + f" — a key is '<run_index>:<defect_id>' over run indices {span} and "
+        f"defects {sorted(defect.id for defect in defects)}; an unmatched label "
+        "is dropped and the matcher's verdict published in its place"
+    )
 
 
 # --- verdicts ----------------------------------------------------------------
@@ -646,6 +699,7 @@ def classify(
 
     items = ground_truth(fixture)
     defects = [item for item in items if item.is_defect]
+    assert_labels_match(labels, indices, defects)
 
     hits: dict[str, int] = {item.id: 0 for item in defects}
     labelled: dict[str, int] = {item.id: 0 for item in defects}

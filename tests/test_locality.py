@@ -537,6 +537,69 @@ def test_run_indices_falls_back_to_position_and_still_catches_a_collision() -> N
         run_indices([{"run_index": 1}, {}])
 
 
+def test_labels_are_keyed_by_recorded_run_index_not_by_position(tmp_path: Path) -> None:
+    """A failed run leaves a gap, and the gap must not shift every later label.
+
+    `classify` keys hand labels by the *recorded* `run_index`, not by the run's
+    position among the scored runs. `measure` writes a record for a failed run
+    too, so a batch whose first run died has scored runs numbered 1 and 2 sitting
+    at positions 0 and 1 — and keying by position would apply each label to the
+    wrong run and move the detection rate with nothing raised.
+
+    `assay.eval.precision` has pinned this since it was written; locality did
+    not, so the keying line could be rewritten to `enumerate(scored)` with the
+    whole suite still green.
+    """
+    fixture = load_fixture(build(tmp_path / "TS-0001"))
+    runs = clean_runs(3, [[], [], [finding("src/shipments.ts", 40, 40)]])
+    runs[0].update({"failed": True, "error": "timeout"})
+
+    # Run 2 is the one the human labelled; it sits at position 1 among the
+    # scored runs, so position-keying would credit run 1 instead.
+    report = classify(fixture, transcript(runs), labels={"2:TS-0001-d1": True})
+
+    assert report.scored == 2
+    assert report.verdicts[0].hand_labelled == 1
+    assert report.verdicts[0].hits == 1
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        None,  # JSON null — `int()` raises TypeError, which no caller catches
+        "first",  # non-numeric — `int()` raises, naming the wrong problem
+        3.0,  # JSON float — truncates, silently re-keying the run
+        True,  # bool is an int subclass in Python, so `int(True)` is 1
+    ],
+    ids=["null", "text", "float", "bool"],
+)
+def test_a_run_index_that_is_not_an_integer_is_refused(value: Any) -> None:
+    """The field is an identity, so it is taken as written or not at all.
+
+    Coercing it is what makes a wrong number silent. `3.0` truncating to `3`
+    re-keys the run: a label file written `"3.0:TS-0001-d1"` matched before the
+    coercion existed and misses after it, and because `classify` does not
+    validate label keys the human's judgement is dropped without a word and the
+    crude matcher's verdict is published instead. `True` keying as `1` is the
+    same hazard wearing a different hat.
+
+    Rejecting rather than coercing also puts `None` inside the module's error
+    contract: a bare `TypeError` from `int()` escapes both callers' wraps.
+    """
+    with pytest.raises(ValueError, match="run_index"):
+        run_indices([{"run_index": value}])
+
+
+def test_a_malformed_run_index_reaches_the_caller_as_its_own_error(tmp_path: Path) -> None:
+    """`classify` promises `LocalityError`; a raw `TypeError` breaks that."""
+    fixture = load_fixture(build(tmp_path / "TS-0001"))
+    runs = clean_runs(1, [[]])
+    runs[0]["run_index"] = None
+
+    with pytest.raises(LocalityError, match="run_index"):
+        classify(fixture, transcript(runs))
+
+
 def test_every_repeated_index_is_named_not_just_the_first() -> None:
     with pytest.raises(ValueError, match=r"\[2, 5\]"):
         run_indices(

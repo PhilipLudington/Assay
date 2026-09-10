@@ -248,6 +248,19 @@ def test_a_repeated_run_index_is_refused(fixture) -> None:  # type: ignore[no-un
         score(fixture, batch, {finding_key(0, 0): "defect:TS-0001-d1"})
 
 
+def test_a_malformed_run_index_reaches_the_caller_as_its_own_error(fixture) -> None:  # type: ignore[no-untyped-def]
+    """`score` promises `PrecisionError`; a raw `TypeError` breaks that.
+
+    `int()` on a JSON null raises `TypeError`, which is not a `ValueError` and
+    so escapes the wrap in `score` entirely.
+    """
+    batch = transcript([run(0, 1)])
+    batch["runs"][0]["run_index"] = None
+
+    with pytest.raises(PrecisionError, match="run_index"):
+        score(fixture, batch, {finding_key(0, 0): "other"})
+
+
 def test_an_unparseable_run_may_share_an_index_with_a_scored_one(fixture) -> None:  # type: ignore[no-untyped-def]
     """The rule guards the runs that get keyed, not every record on file.
 

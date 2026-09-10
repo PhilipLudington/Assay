@@ -191,7 +191,7 @@ Found issues, worked between PRs and ahead of phase work. Each is one branch off
       refused, dropping a hand label without a word. Closed in this branch by
       rejecting a non-integer index outright; see the malformed-`run_index` line
       below, whose own third claim the review also falsified.)
-- [ ] **`classify` accepts a hand label that names nothing, and says nothing.**
+- [x] **`classify` accepts a hand label that names nothing, and says nothing.**
       `locality.py:665-670` looks up `key in labels` and, when the key is
       absent, falls through to the matcher — so a `--labels` file holding
       `{"5:TS-0001-d1": true}` against a 2-run transcript, or the typo `-dl` for
@@ -208,6 +208,37 @@ Found issues, worked between PRs and ahead of phase work. Each is one branch off
       precision's `extra` set difference over `run_key(index, defect.id)` for
       the computed indices and the fixture's defects, and validate defect ids
       against the answer key. (qa-review 2026-09-09)
+      (completed 2026-09-10 — `assert_labels_match` in `assay.corpus.locality`,
+      called by `classify`. One set difference over `run_key` answers both
+      halves the line names, because a locality key carries both at once
+      (`<run_index>:<defect_id>`) where precision needs two checks for its two
+      vocabularies.
+      **Measured on the shipped labels before fixing, and the consequence is
+      worse than "changes nothing and reports nothing".** Spelling `-dl` for
+      `-d1` drops all ten judgements and flips the published `SURVIVED
+      cross_file 0/10` to `REFUTED 10/10` — the crude matcher's verdict, which
+      those ten labels exist to overrule. Numbering the runs from 1, as a reader
+      copying them off `print_report` would, drops nine and gives `REFUTED
+      1/10`. The one visible trace was `hand_labelled` falling below the number
+      of labels the file holds, and nothing reads it.
+      **This line's `manifest_block` claim is inverted on the only fixture
+      measured, and that is the reusable part.** It predicted a `verified: true`
+      block emitted from a verdict the human believed they had overruled. On
+      `TS-0001` the drop goes the other way: the published `verified: true`
+      block *vanishes*, and `manifest_block` prints an instruction to downgrade
+      the tag by hand. The `verified: true` hazard is real but needs the
+      opposite label direction — a human labelling *found* to refute a claim the
+      matcher missed — so it is a second shape, not this one. Checked rather
+      than argued a second time.
+      The `_`-prefixed commentary skip lives in the helper, not only in `main`
+      which strips such keys on the way in: the shipped label files carry
+      commentary, and every other caller hands `classify` the file as read.
+      `tests/test_shipped_results.py` caught the first version doing exactly
+      that — a rule enforced in one of two entry points, which is the shape this
+      module keeps closing. 312 tests green, both published results re-score
+      unchanged, and four mutations — check removed, run-index-only,
+      defect-id-only, commentary skip dropped — are each caught by the tests
+      that should catch them.)
 - [ ] **`print_report` numbers runs on a different basis than `classify` keys
       them.** `locality.py:795-808` enumerates **all** runs; `classify` keys by
       position within **scored** runs. Pre-existing — verified 2026-09-09 as
@@ -234,6 +265,14 @@ Found issues, worked between PRs and ahead of phase work. Each is one branch off
       error contract. Fix: have `print_report` use the indices `classify`
       computed rather than re-deriving them — one change closes both symptoms.
       (qa-review 2026-09-09)
+      **Re-rated 2026-09-10, after the line above was closed.** Its first
+      symptom is no longer silent: `assert_labels_match` refuses a key naming no
+      scored run, so a label copied out of a divergently-numbered report now
+      raises and names the indices that do exist, instead of scoring nothing.
+      That was the whole reason this line ranked where it does. The second
+      symptom — `f"{None:>2}"` raising `TypeError` — is untouched and is now the
+      larger half, since it is an unhandled crash outside the module's error
+      contract. Both still close with the one change already named.
 - [x] **Decide what a malformed `run_index` is, not just a repeated one.**
       `run_indices` (and `precision.score` before it) reached the field with a
       bare `int(...)`, so the *type* was unchecked while the uniqueness was

@@ -68,6 +68,7 @@ import hashlib
 import json
 import sys
 import time
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -472,6 +473,71 @@ def partition_runs(
     return billed, scored
 
 
+def run_indices(records: list[dict[str, Any]]) -> list[int]:
+    """The `run_index` of each record, refusing a batch that repeats one.
+
+    Every hand label in this project is keyed by run index — `<run>:<defect>`
+    here, `<run>:<finding>` in `assay.eval.precision` — so a repeated index is
+    not a cosmetic duplicate. It makes two runs share one key, and one human
+    judgement is then counted once per run that collides with it: a label
+    written about run 0 scores run 0's twin as well.
+
+    Neither module's existing guards see it. Precision's "unlabelled finding"
+    check finds the key present, and its "label names a finding this batch does
+    not have" check builds a *set* of keys, which collapses the duplicates back
+    down. So the batch scores clean and reports a rate nobody measured.
+
+    The trigger is mundane: two batches concatenated, which is how a re-run gets
+    appended to a transcript. Refused here rather than in either caller for the
+    same reason `partition_runs` lives here — one definition of which run is
+    which for the two *scorers*, or the two reports of one batch disagree about
+    it.
+
+    "For the two scorers" is meant literally, and is not yet the whole story:
+    `print_report` below derives its own run numbers, and the number it prints
+    is what a human copies into a `--labels` file. It prints the recorded
+    `run_index` where there is one — which is every transcript `measure` writes,
+    so the two agree in practice — but *falls back* to the record's position
+    among **all** runs, where this function falls back to the position among the
+    **scored** ones. On a record carrying no `run_index` the two disagree. That
+    divergence predates this helper and is queued in PLAN.md; until it is
+    closed, this function is the single definition of the keys labels are
+    *matched* against, not of the run numbers a reader is *shown*.
+
+    Falls back to position when a record carries no `run_index` at all, which is
+    what both callers did before this check existed. Mixed presence is exactly a
+    way to collide, and it is caught by the same rule.
+
+    An index that is present but is not an integer is **refused, not coerced**.
+    Coercion is what makes a wrong number silent: `int(3.0)` re-keys the run from
+    `3.0` to `3`, so a label file written `"3.0:TS-0001-d1"` stops matching, and
+    since `classify` does not validate label keys the human's judgement is
+    dropped without a word and the crude matcher's verdict is published in its
+    place. `True` keying as `1` is the same hazard — `bool` is an `int` subclass,
+    so it is excluded explicitly. Refusing also keeps a JSON `null` inside each
+    caller's error contract, where a bare `TypeError` from `int()` would escape
+    both wraps.
+    """
+    indices: list[int] = []
+    for position, record in enumerate(records):
+        raw = record.get("run_index", position)
+        if not isinstance(raw, int) or isinstance(raw, bool):
+            raise ValueError(
+                f"run_index must be an integer, got {raw!r} at position {position} "
+                "— an identity is taken as written or not at all, because coercing "
+                "one silently changes which run a label scores"
+            )
+        indices.append(raw)
+    counts = Counter(indices)
+    repeated = sorted(index for index, count in counts.items() if count > 1)
+    if repeated:
+        raise ValueError(
+            f"run_index repeated in this batch: {repeated} — labels are keyed by "
+            "run index, so one label would score every run that shares it"
+        )
+    return indices
+
+
 # --- verdicts ----------------------------------------------------------------
 
 
@@ -573,6 +639,10 @@ def classify(
     # "found nothing" would depress detection and could turn a refutable
     # cross_file claim into a surviving one.
     billed, scored = partition_runs(runs)
+    try:
+        indices = run_indices(scored)
+    except ValueError as error:
+        raise LocalityError(str(error)) from error
 
     items = ground_truth(fixture)
     defects = [item for item in items if item.is_defect]
@@ -581,7 +651,7 @@ def classify(
     labelled: dict[str, int] = {item.id: 0 for item in defects}
     bites: dict[str, int] = {item.id: 0 for item in items if not item.is_defect}
 
-    for index, record in enumerate(scored):
+    for index, record in zip(indices, scored, strict=True):
         matched: set[str] = set()
         for finding in record.get("findings", []):
             if not isinstance(finding, dict):
@@ -593,7 +663,7 @@ def classify(
             if name in bites:
                 bites[name] += 1
         for target_defect in defects:
-            key = run_key(record.get("run_index", index), target_defect.id)
+            key = run_key(index, target_defect.id)
             if key in labels:
                 labelled[target_defect.id] += 1
                 was_found = bool(labels[key])

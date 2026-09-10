@@ -148,7 +148,7 @@ Found issues, worked between PRs and ahead of phase work. Each is one branch off
       scalar. 291 tests green; five mutations each caught by the tests that
       should catch them. The review also found a real defect in
       `assay.eval.precision`; that is the next line.)
-- [ ] **Reject a repeated `run_index` in `assay.eval.precision`.**
+- [x] **Reject a repeated `run_index` in `assay.eval.precision`.**
       `precision.py:207` reads `index = int(record.get("run_index", position))`
       and trusts it to be unique, but nothing enforces it. Two scored runs
       sharing a `run_index` make `finding_key` collide, so one run's labels
@@ -166,6 +166,105 @@ Found issues, worked between PRs and ahead of phase work. Each is one branch off
       place, next to the `distractor_key` line below. Fix: refuse a duplicate
       `run_index` the way `manifest.py` refuses a duplicate defect id.
       (qa-review 2026-09-09)
+      (completed 2026-09-09 — `run_indices` in `assay.corpus.locality`, called
+      by both scorers, next to `partition_runs` and for its reason. Reproduced
+      on the pre-fix tree first, and **the locality path was worse than this
+      line recorded**: one label `0:TS-0001-d1` read as `hits=2/2,
+      hand_labelled=2`, a detection rate of 1.00 from a single human judgement,
+      where precision's version at least needed the duplicate to carry a
+      finding. Precision's recall for the seeded defect came back
+      `1.00 [0.16, 1.00]` on one label.
+      The helper keeps the positional fallback both callers already had, so
+      *mixed* presence — one record carrying an index that another falls back
+      onto — is caught by the same rule instead of being the way around it. It
+      raises `ValueError` and each caller re-raises as its own type, because
+      `PrecisionError` is a `ValueError` and `LocalityError` a `RuntimeError`
+      and one shared exception would have broken one of the two contracts. The
+      check covers the runs that get *keyed*, not every record on file: a failed
+      or unparseable run carries no label, and refusing a batch over its index
+      would reject transcripts that score correctly — both are pinned by tests.
+      Both published results re-score unchanged.
+      **Amended after its own review, which found the fix carried a regression
+      of exactly the kind it was written to prevent**: the shared helper's
+      `int()` was new on the locality path — `classify` previously f-stringed
+      the raw value — so a non-integer index was silently re-keyed rather than
+      refused, dropping a hand label without a word. Closed in this branch by
+      rejecting a non-integer index outright; see the malformed-`run_index` line
+      below, whose own third claim the review also falsified.)
+- [ ] **`classify` accepts a hand label that names nothing, and says nothing.**
+      `locality.py:665-670` looks up `key in labels` and, when the key is
+      absent, falls through to the matcher — so a `--labels` file holding
+      `{"5:TS-0001-d1": true}` against a 2-run transcript, or the typo `-dl` for
+      `-d1`, changes nothing and reports nothing. `assay.eval.precision` refuses
+      both halves of this (`precision.py:252` rejects labels naming findings the
+      batch does not have; `load_labels` validates every label against the
+      fixture's answer key and says a typo "scores silently") and locality has
+      **neither** — verified 2026-09-09 by grep: no equivalent check exists.
+      The consequence is the bad one: `hand_labelled` prints 0, the crude
+      matcher's verdict stands, and `manifest_block` emits a `verified: true`
+      block from a verdict the human believed they had overruled. This is the
+      enabler that turns the two items around it from loud errors into silently
+      wrong published numbers, so it is the one to do first. Fix: mirror
+      precision's `extra` set difference over `run_key(index, defect.id)` for
+      the computed indices and the fixture's defects, and validate defect ids
+      against the answer key. (qa-review 2026-09-09)
+- [ ] **`print_report` numbers runs on a different basis than `classify` keys
+      them.** `locality.py:795-808` enumerates **all** runs; `classify` keys by
+      position within **scored** runs. Pre-existing — verified 2026-09-09 as
+      identical on `main` (`classify` at :584 over `scored`, `print_report` at
+      :727 over all runs) — so this branch did not introduce it. Trigger: a
+      transcript whose records carry no `run_index` with a failed first run;
+      `print_report` prints `run 1`, `classify` keys that run `0`, and a label
+      copied out of the printed report never matches. It matters because the
+      printed number is exactly what a human copies into a labels file — those
+      are keyed `'<run_index>:<defect_id>'` — and the line above is why the miss
+      is silent. Unreachable from transcripts this repo writes (`measure` always
+      stamps `run_index`), so it is a hand-edited or foreign transcript, which
+      is what re-scoring months later involves.
+      **A second symptom of the same root cause, found by the fix-check on this
+      branch:** `print_report` formats the raw field with `f"{...:>2}"`, and
+      `f"{None:>2}"` raises `TypeError: unsupported format string passed to
+      NoneType.__format__`. `partition_runs` drops failed and unparseable
+      records before `run_indices` ever sees them, so the type guard added on
+      this branch does not cover them, and `main` calls `classify` (which
+      succeeds) and then `print_report` (which does not). Trigger: a failed run
+      recorded as `{"run_index": null, "failed": true}`. Verified 2026-09-09 —
+      the `TypeError` reproduces and the code is byte-identical on `main`. This
+      is the one remaining `run_index: null` path that escapes the module's
+      error contract. Fix: have `print_report` use the indices `classify`
+      computed rather than re-deriving them — one change closes both symptoms.
+      (qa-review 2026-09-09)
+- [x] **Decide what a malformed `run_index` is, not just a repeated one.**
+      `run_indices` (and `precision.score` before it) reached the field with a
+      bare `int(...)`, so the *type* was unchecked while the uniqueness was
+      enforced. Verified 2026-09-09 by probing the helper directly: `run_index:
+      null` raises a bare `TypeError` that escapes both callers' `except
+      ValueError` wrap and surfaces as an unhandled crash, and `run_index:
+      "first"` raises a `ValueError` that gets re-labelled `PrecisionError:
+      invalid literal for int() with base 10` — an error that names the wrong
+      problem to whoever reads it. Nothing in this repo writes such a transcript
+      — `measure` always writes an int — so this is a hand-edited or
+      foreign-produced transcript, which is exactly what re-scoring months later
+      involves. (found while fixing the line above, 2026-09-09)
+      (completed 2026-09-09, in the same branch rather than its own, because the
+      review found the coercion was **this branch's own regression** and not the
+      pre-existing hole this line first described: `classify` had no `int()` at
+      all before — it f-stringed the raw value into the key — so the cast
+      arrived with `run_indices`. The rule is **reject, never coerce**: an index
+      that is present but not an integer raises, with `bool` excluded explicitly
+      since it is an `int` subclass and `True` would otherwise key as run 1.
+      Coercion is what makes a wrong number silent — `int(3.0)` re-keys a run
+      from `3.0` to `3`, so a label file written against the old behaviour stops
+      matching and, because `classify` validates no label key, the human's
+      judgement is dropped without a word and the matcher's verdict is published
+      instead.
+      **This line's third claim was wrong and the correction is the reusable
+      part.** It said `0.0` truncating onto a run numbered `0` was a way to
+      collide *while passing the duplicate check*. It is not: `Counter` counts
+      the post-`int()` values, so that batch yields `[0, 0]` and is refused by
+      the duplicate guard itself — the one shape this line offered as
+      un-caught was the one shape already caught. Re-probed before rewriting
+      rather than reasoned about a second time.)
 - [ ] **Give "a distractor must survive the defect's fix" an executable form.**
       The rule was adopted 2026-08-01 and is enforced by prose only. It is not
       derivable from `change.patch`: that patch adds `reservation-sweeper.ts`
@@ -213,8 +312,9 @@ Found issues, worked between PRs and ahead of phase work. Each is one branch off
       and a workflow that called the API would breach the budget silently.
       (qa-review 2026-09-08)
       **The repo is not green on its own linters today, so decide what the job
-      runs before writing it** (measured 2026-09-09): `pytest` passes 291/291,
-      but `ruff check .` reports 20 errors and `mypy src tests` reports 36. All
+      runs before writing it** (measured 2026-09-09, re-measured the same day
+      at 297/297): `pytest` passes, but `ruff check .` still reports 20 errors
+      and `mypy src tests` still reports 36 — neither count moved. All
       20 ruff errors are in `pilot/`, which the task below deletes, so that half
       resolves itself. The 36 mypy errors are in `tests/test_locality.py`,
       `tests/test_pilot_scoring.py` and `tests/test_probe.py` — mostly bare

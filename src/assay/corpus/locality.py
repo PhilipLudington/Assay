@@ -70,7 +70,7 @@ import sys
 import time
 from collections import Counter
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
@@ -453,6 +453,32 @@ def run_key(index: int, defect_id: str) -> str:
     return f"{index}:{defect_id}"
 
 
+def _key_index(key: str) -> int | None:
+    """The run index a label key names, or `None` when its head is not one.
+
+    `str(index) != head` rejects `" 3"`, `"03"` and `"+3"`: a key that only looks
+    like an index is a typo, not a run. Catching `ValueError` here is also what
+    keeps a key written with no run prefix at all — a plausible hand-edit —
+    inside the module's error contract, since `classify` wraps `run_indices` and
+    not this path.
+    """
+    head, _, _ = key.partition(":")
+    try:
+        index = int(head)
+    except ValueError:
+        return None
+    return index if str(index) == head else None
+
+
+def _shift_key(key: str, offset: int) -> str | None:
+    """The same key with its run index moved by `offset`, or `None` if it has none."""
+    index = _key_index(key)
+    if index is None:
+        return None
+    _, _, defect_id = key.partition(":")
+    return run_key(index + offset, defect_id)
+
+
 def partition_runs(
     runs: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -471,6 +497,50 @@ def partition_runs(
     billed = [r for r in runs if not r.get("failed")]
     scored = [r for r in billed if not r.get("parse_error")]
     return billed, scored
+
+
+def _recorded_run_index(record: dict[str, Any], position: int) -> int | None:
+    """The record's `run_index`, refused if present and not an integer.
+
+    `None` when the record carries none, which is not an error here: the two
+    callers have different answers for a record that recorded no index, and
+    neither of them is "guess".
+
+    The refusal lives in one place because it has to hold for every record on
+    file. `run_indices` below validates the records that get *scored*, and
+    `classify`'s set of unscoreable indices used to filter a non-integer out with
+    `isinstance` and say nothing — so `3.0` was an error on a scored record and
+    invisible on the unparseable one beside it, and a label naming that position
+    then hard-failed as nonsense instead of being reported as unhonourable. A
+    rule enforced in one of two entry points is the shape of bug this module
+    keeps closing.
+    """
+    if "run_index" not in record:
+        return None
+    raw = record["run_index"]
+    if not isinstance(raw, int) or isinstance(raw, bool):
+        raise ValueError(
+            f"run_index must be an integer, got {raw!r} at position {position} "
+            "— an identity is taken as written or not at all, because coercing "
+            "one silently changes which run a label scores"
+        )
+    return raw
+
+
+def _unscored_run_indices(runs: list[dict[str, Any]]) -> set[int]:
+    """The recorded indices of runs that exist but cannot be scored.
+
+    Only a *recorded* index counts — see `assert_labels_match` on why a record
+    that never recorded one is not given an invented position here.
+    """
+    indices: set[int] = set()
+    for position, record in enumerate(runs):
+        if not (record.get("failed") or record.get("parse_error")):
+            continue
+        recorded = _recorded_run_index(record, position)
+        if recorded is not None:
+            indices.add(recorded)
+    return indices
 
 
 def run_indices(records: list[dict[str, Any]]) -> list[int]:
@@ -503,6 +573,18 @@ def run_indices(records: list[dict[str, Any]]) -> list[int]:
     divergence predates this helper and is queued in PLAN.md; until it is
     closed, this function is the single definition of the keys labels are
     *matched* against, not of the run numbers a reader is *shown*.
+    `assert_labels_match` below narrows the blast radius but does **not** close
+    it. Which keys that check refuses is stated once, in its docstring under
+    "Where a mis-keyed label ends up"; it is not restated here, because
+    restating it is how this module's two descriptions of the boundary came to
+    disagree. What becomes of a copied *number* is not stated there either — it
+    turns on this divergence, not on that boundary. The case that survives the
+    narrowing is the silent one. Four records with
+    no `run_index`, record 0 unparseable: `print_report` prints runs 0-3, this
+    function keys the three scored records 0-2, and a label written for the run
+    printed as `2` passes the check and scores the record printed as `3`. One
+    human judgement counted against the wrong run, with `hand_labelled` reading
+    1 as though it had been honoured. Only closing the divergence fixes that.
 
     Falls back to position when a record carries no `run_index` at all, which is
     what both callers did before this check existed. Mixed presence is exactly a
@@ -510,24 +592,20 @@ def run_indices(records: list[dict[str, Any]]) -> list[int]:
 
     An index that is present but is not an integer is **refused, not coerced**.
     Coercion is what makes a wrong number silent: `int(3.0)` re-keys the run from
-    `3.0` to `3`, so a label file written `"3.0:TS-0001-d1"` stops matching, and
-    since `classify` does not validate label keys the human's judgement is
-    dropped without a word and the crude matcher's verdict is published in its
-    place. `True` keying as `1` is the same hazard — `bool` is an `int` subclass,
+    `3.0` to `3`, so a label file written `"3.0:TS-0001-d1"` stops matching. That
+    now raises through `assert_labels_match` rather than dropping the human's
+    judgement in silence, but the rule stays reject-not-coerce: an identity that
+    is re-keyed under the reader's feet is a wrong key made to look right, and
+    the point is to keep it as written. `True` keying as `1` is the same hazard —
+    `bool` is an `int` subclass,
     so it is excluded explicitly. Refusing also keeps a JSON `null` inside each
     caller's error contract, where a bare `TypeError` from `int()` would escape
     both wraps.
     """
     indices: list[int] = []
     for position, record in enumerate(records):
-        raw = record.get("run_index", position)
-        if not isinstance(raw, int) or isinstance(raw, bool):
-            raise ValueError(
-                f"run_index must be an integer, got {raw!r} at position {position} "
-                "— an identity is taken as written or not at all, because coercing "
-                "one silently changes which run a label scores"
-            )
-        indices.append(raw)
+        recorded = _recorded_run_index(record, position)
+        indices.append(position if recorded is None else recorded)
     counts = Counter(indices)
     repeated = sorted(index for index, count in counts.items() if count > 1)
     if repeated:
@@ -536,6 +614,213 @@ def run_indices(records: list[dict[str, Any]]) -> list[int]:
             "run index, so one label would score every run that shares it"
         )
     return indices
+
+
+def assert_labels_match(
+    labels: dict[str, bool],
+    indices: list[int],
+    defects: list[GroundTruth],
+    unscored: set[int] | None = None,
+) -> list[str]:
+    """Refuses a nonsense label key; reports one that is merely unhonourable.
+
+    Returns the keys that name a real run this batch could not score — a run
+    that failed or came back unparseable. Those are *not* errors: the batch
+    still scores every run it can, and the caller surfaces them so the reader
+    learns their judgement went unused. Everything else raises.
+
+    `classify` used to look each key up, miss, and fall through to the matcher,
+    so a `--labels` file that named nothing changed nothing and *said* nothing.
+    That is the quiet half of every keying mismatch this module has had: a
+    repeated index or a coerced one is only dangerous because the label it
+    displaces disappears without a word.
+
+    Measured on `TS-0001`'s own shipped labels, which is why a nonsense key
+    raises rather than warns. Typing `-dl` for `-d1` drops all ten human
+    judgements and turns
+    the published `SURVIVED cross_file 0/10` into `REFUTED 10/10` — the crude
+    matcher's verdict, which the same ten labels exist to overrule. Numbering the
+    runs from 1, as a reader copying them off a report would, drops nine and
+    reports `REFUTED 1/10`. In both cases the only trace is `hand_labelled`
+    falling below the number of labels the file holds, and nothing reads it.
+
+    `assay.eval.precision` splits this check in two, because its keys and its
+    values carry different things: `load_labels` validates a label against the
+    fixture's answer key, and `score` refuses keys naming findings the batch does
+    not have. A locality key carries both halves at once
+    (``<run_index>:<defect_id>``), so one set difference answers both.
+
+    Keys prefixed with `_` are commentary and are skipped, the same convention
+    `assay.eval.precision.load_labels` documents: a label file is where the
+    reasoning behind a hand judgement lives, and it has to sit beside the labels
+    it explains. The skip belongs here rather than only in `main`, which strips
+    them on the way in, because the shipped label files carry commentary and
+    every other caller — `tests/test_shipped_results.py` included — hands
+    `classify` the file as read. A rule enforced in one of two entry points is
+    the shape of bug this module keeps closing.
+
+    **Why an unhonourable key is not an error.** Refusing every unmatched key
+    was the first shape of this check, and it was too blunt: `partition_runs`'
+    third tier says a run can be billed and still unscoreable, so one re-run
+    coming back unparseable made the *shipped* label file refuse its own
+    transcript, and nine good runs with nine good labels produced nothing. A
+    key naming such a run is not a typo — the run is real, the human's
+    judgement about it is real, and only the scoring is impossible. So it is
+    returned, counted nowhere, and printed; `hand_labelled` falls short on its
+    own, which is the signal the reader already knows how to read.
+
+    **Where a mis-keyed label ends up.** This is the module's one statement of
+    this check's boundary; the other sites point here instead of restating it,
+    because every restatement so far has drifted from the code. A key that does
+    not name the run it was written about reaches exactly one of three
+    outcomes, and the conditions are what separate them:
+
+    1. **Absorbed silently.** Its index is a *scored* index and its defect id is
+       in the answer key, so it matches as written and scores the wrong run. It
+       never becomes a candidate, so nothing below sees it. This is the open
+       case recorded in `PLAN.md` under the `print_report` numbering line, and
+       the only outcome that is silent.
+    2. **Reported as unhonourable.** Its index is not scored, a failed or
+       unparseable record *recorded* that index, and its defect id is in the
+       answer key. All three conditions bind, and the middle one is narrower
+       than it looks: `_unscored_run_indices` above contributes an index only
+       for a record that recorded one, because inventing a position for a
+       record that did not is the guesswork that makes `print_report`'s
+       numbering diverge from this module's, and one such divergence is enough.
+    3. **Refused as nonsense.** Everything else — which is the whole remainder,
+       not only a key past the end: an index that neither the scored set nor
+       the recorded unscoreable set holds, *or* a defect id outside the answer
+       key at any index whatsoever.
+
+    Those three conditions are the whole boundary, and they are stated over key
+    *values*. Where a number a reader *copied off the report* lands is a
+    different question, and this list does not answer it: `print_report`
+    numbers a record that recorded no `run_index` by its position among **all**
+    runs, where `run_indices` above keys by position among the **scored** ones,
+    so from the first such record onward the printed number runs ahead of the
+    key. A copied one reaches whichever of the three outcomes its value earns
+    — outcome 1, the silent one, included. Which one it earns is not enumerable
+    here while that divergence is open (`PLAN.md`, the `print_report` numbering
+    line); closing it is what would make a copied number safe, and nothing in
+    this function can.
+
+    Over those sits one raise decided on the key set rather than the key: a
+    label file whose keys, shifted by one, reproduce the scored index set
+    exactly — every scored index claimed and nothing else. A file off by one
+    over only *part* of the batch is not that set, so it is not refused **as a
+    shift** — which is not the same as being accepted, since each of its keys
+    still lands in one of the three outcomes above.
+
+    **Why the uniform shift is a case of its own.** It is a property of the key
+    set, not of any key in it, so deciding absorption one key at a time cannot
+    see it. Numbering the runs from 1 — the hazard this check was built for —
+    can put the displaced top key on an index that could not be scored, where
+    reporting that one as unhonourable leaves every key below it honoured
+    against the run next to the one it was written about, and the shortfall in
+    `hand_labelled` explained away by the warning the report prints for it. So
+    the set is tested for a constant ±1 shift before anything is absorbed, and
+    only when something failed to match as written: a file whose keys all match
+    is a file that is not shifted. The shifted keys must cover the scored index
+    set *exactly* — a proper subset is not evidence of a shift, because a correct
+    file labelling the top of the range plus the unscoreable run above it also
+    shifts wholly into the accepted set, and refusing that would override
+    outcome 2. Two keys are the least that can show a *constant* shift; a
+    lone key cannot be told apart from a judgement about a run that could not be
+    scored, and that one is reported.
+
+    **That rescue is partial, and where it fails is the honest part.** It holds
+    while the shifted keys fall short of the scored set — some scored index left
+    unclaimed, or a shifted key that is not an expected key at all. When they
+    reproduce the scored set *entire*, the two readings are indistinguishable
+    here, and the code resolves the ambiguity against the correct file: it
+    raises. The discriminator is coverage of the scored set, not the size or
+    the shape of the batch. Probed: scored `[0,1]` with run 2 unscoreable and
+    keys `1,2` raises `keyed one high`, and
+    `test_a_whole_file_off_by_one_is_refused_not_absorbed` pins that identical
+    input as the hazard this check exists to refuse; keys `2,3` over scored
+    `[0,1,2]` leave index 0 unclaimed and are accepted with the top key
+    reported, and so are keys `2,3` over a *holed* scored `[0,2]`, where the
+    shift lands on an index the batch never scored. Both readings of the
+    refused shape are real; what this docstring must not do is promise the
+    correct one is always rescued. Typing `-dl` for
+    `-d1` still raises on its own, because no shift makes a defect id known.
+
+    An index is only matched against `unscored` when it round-trips through
+    `str(int(...))`; a key whose head does not is outcome 3 like any other.
+    """
+    labelled = [key for key in labels if key[:1] != "_"]
+    expected = {run_key(index, defect.id) for index in indices for defect in defects}
+    candidates = sorted(key for key in labelled if key not in expected)
+    if not candidates:
+        return []
+
+    if len(labelled) > 1:
+        for offset in (1, -1):
+            shifted = [_shift_key(key, offset) for key in labelled]
+            if any(key is None or key not in expected for key in shifted):
+                continue
+            # Containment is not enough: a correct label file whose keys sit at
+            # the top of the scored range, with one on the unscoreable run above
+            # them, also shifts wholly *into* `expected`. Requiring the shifted
+            # keys to reproduce the scored set *entire* is what tells the two
+            # apart, and is the only thing the message below can honestly claim.
+            # It does not tell them apart in every batch — see the docstring's
+            # "That rescue is partial" for the shape it still refuses.
+            if {_key_index(key) for key in shifted if key is not None} != set(indices):
+                continue
+            raise LocalityError(
+                f"every one of these {len(labelled)} label(s) is keyed one "
+                f"{'high' if offset == -1 else 'low'}: adding {offset:+d} to each "
+                f"index reproduces this batch's scored indices {sorted(indices)} "
+                "exactly — every one of them, and nothing else. That is the "
+                "whole-file off-by-one this check exists for."
+                + (
+                    " Numbering the runs from 1, as a reader copying them off the "
+                    "report would, is how it usually arises."
+                    if offset == -1
+                    else ""
+                )
+                + " It is refused as a set because key by key it is invisible: at "
+                "least one key falls outside the scored set, where it is reported "
+                "as unhonourable or refused as nonsense depending on what it "
+                "names, while every other key is honoured against the run next to "
+                "the one it was written about."
+            )
+
+    known = {defect.id for defect in defects}
+    unscored = unscored or set()
+    unhonourable: list[str] = []
+    unmatched: list[str] = []
+    for key in candidates:
+        _, _, defect_id = key.partition(":")
+        index = _key_index(key)
+        names_a_real_run = index is not None and index in unscored
+        if names_a_real_run and defect_id in known:
+            unhonourable.append(key)
+        else:
+            unmatched.append(key)
+
+    if not unmatched:
+        return unhonourable
+
+    # The *set*, never `min-max`. A scored-run index set has a hole in it
+    # whenever a run failed or came back unparseable, which `partition_runs`'
+    # three tiers guarantee recurs — and a range printed over that hole names
+    # the very index it is rejecting, leaving the reader nothing to act on.
+    scored = f"{sorted(indices)}" if indices else "none — no run scored"
+    raise LocalityError(
+        f"{len(unmatched)} label(s) name nothing in this batch: {unmatched[:8]}"
+        + (" ..." if len(unmatched) > 8 else "")
+        + f" — a key is '<run_index>:<defect_id>' over scored run indices "
+        f"{scored} and defects {sorted(defect.id for defect in defects)}. Each "
+        "key listed above names an index that is in neither list, or a defect "
+        "that is not in the answer key. A label for a run that failed or did "
+        "not parse is absent from this list only when that run recorded a "
+        "`run_index` and the key's defect id is in the answer key — that one is "
+        "reported as unhonoured and the rest of the batch still scores. "
+        "Otherwise it is listed above like any other, and the defect id or the "
+        "missing index is why."
+    )
 
 
 # --- verdicts ----------------------------------------------------------------
@@ -613,6 +898,10 @@ class LocalityReport:
     verdicts: list[DefectVerdict]
     distractor_bites: dict[str, int]
     cost_usd: float
+    #: Label keys naming a real run this batch could not score. Not an error and
+    #: not counted in `hand_labelled` — reported so a judgement never goes
+    #: unused in silence, which is the hole this module keeps closing.
+    unhonourable_labels: list[str] = field(default_factory=list)
 
     @property
     def settled(self) -> bool:
@@ -641,11 +930,32 @@ def classify(
     billed, scored = partition_runs(runs)
     try:
         indices = run_indices(scored)
+        # The runs that exist — billed, or failed — but cannot be scored. The
+        # same integer refusal applies to them: a rule that held only for the
+        # scored records would make `3.0` an error on one record and invisible
+        # on the unparseable one beside it.
+        unscored = _unscored_run_indices(runs)
     except ValueError as error:
         raise LocalityError(str(error)) from error
 
+    # `run_indices` de-duplicates within the scored records only, which leaves
+    # one index claimed by both a scored run and an unscoreable one. Both build
+    # the same label key, so a judgement about the run that produced nothing is
+    # honoured against the one that scored — silently, because the key is in
+    # `expected` and never reaches the unhonourable list.
+    shared = sorted(unscored & set(indices))
+    if shared:
+        raise LocalityError(
+            f"run_index {shared} names both a scored run and one that failed or "
+            "did not parse — labels are keyed by run index, so a judgement about "
+            "the run that produced nothing would be honoured against the one "
+            "that scored, and reported nowhere. Two batches concatenated is how "
+            "this arises."
+        )
+
     items = ground_truth(fixture)
     defects = [item for item in items if item.is_defect]
+    unhonourable = assert_labels_match(labels, indices, defects, unscored)
 
     hits: dict[str, int] = {item.id: 0 for item in defects}
     labelled: dict[str, int] = {item.id: 0 for item in defects}
@@ -713,6 +1023,7 @@ def classify(
         verdicts=verdicts,
         distractor_bites=bites,
         cost_usd=sum(float(r.get("cost_usd") or 0.0) for r in billed),
+        unhonourable_labels=unhonourable,
     )
 
 
@@ -788,6 +1099,16 @@ def print_report(
     print(f"{report.failed:>4} failed outright — excluded everywhere")
     print(f"{report.unparseable:>4} returned unparseable output — findings unknown, not empty")
     print(f"{report.scored:>4} scored")
+    if report.unhonourable_labels:
+        # Loud, next to the run accounting that explains it, because the whole
+        # point is that a human judgement must never go unused in silence.
+        print(
+            f"  ⚠ {len(report.unhonourable_labels)} hand label(s) could not be "
+            "honoured — the run they name failed or did not parse, so it is "
+            "scored nowhere:"
+        )
+        for key in report.unhonourable_labels:
+            print(f"      {key}")
     print(f"  spend: ${report.cost_usd:.4f}   model: {report.model}   effort: {report.effort}")
     print(f"  prompt digest: {report.prompt_sha256 or 'unrecorded'}")
 

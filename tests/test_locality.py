@@ -25,11 +25,13 @@ from assay.corpus.locality import (
     MIN_RUNS_TO_VERIFY,
     LocalityError,
     Verdict,
+    assert_labels_match,
     attribute,
     classify,
     extract_findings,
     ground_truth,
     normalise_path,
+    print_report,
     review_floor,
     run_indices,
     run_with_retries,
@@ -103,6 +105,34 @@ distractors:
       lines: [2, 3]
     note: Plausible style complaint about interface field naming; not a defect.
 """
+
+
+def manifest_two_defects() -> str:
+    """`TS-0001` with a second defect, for the rules that cross-product them.
+
+    The corpus holds exactly one fixture with exactly one defect, so `expected`
+    and `known` in `assert_labels_match` are otherwise only ever exercised
+    against a single-defect answer key — a `defects[:1]` mutation in either
+    survives the whole suite. Phase 5 is corpus buildout, which means the first
+    multi-defect fixture would be the thing that discovers that.
+
+    The second defect sits in `src/helpers.ts`, which the diff never touches, so
+    it is structurally `cross_file` and needs no second hunk.
+    """
+    second = """\
+  - id: TS-0001-d2
+    class: missing-guard
+    severity: medium
+    locality:
+      tier: cross_file
+    location:
+      file: src/helpers.ts
+      lines: [2, 2]
+    description: >
+      Rounds without checking the input is finite, so a NaN propagates.
+"""
+    defects, marker, distractors = manifest().partition("distractors:")
+    return f"{defects}{second}{marker}{distractors}"
 
 
 def build(root: Path, *, text: str | None = None) -> Path:
@@ -490,6 +520,586 @@ def test_a_label_can_also_withdraw_a_match(tmp_path: Path) -> None:
     assert report.verdicts[0].status is Verdict.SURVIVED
 
 
+# --- labels that name nothing ------------------------------------------------
+
+
+def test_a_label_naming_a_run_the_batch_does_not_have_is_refused(tmp_path: Path) -> None:
+    """A label file is a human overruling the matcher; it must not miss quietly.
+
+    Before this check `classify` looked the key up, missed, and fell through to
+    the matcher — `hand_labelled` printed 0 and the matcher's verdict was
+    published as though nobody had judged the run at all.
+    """
+    fixture = load_fixture(build(tmp_path / "TS-0001"))
+    runs = clean_runs(2, [[finding("src/shipments.ts", 8, 8)], []])
+
+    with pytest.raises(LocalityError, match="name nothing in this batch"):
+        classify(fixture, transcript(runs), labels={"5:TS-0001-d1": True})
+
+
+def test_a_typoed_defect_id_is_refused_rather_than_silently_dropped(tmp_path: Path) -> None:
+    """One keystroke used to invert the published verdict with no error.
+
+    Measured on `TS-0001`'s shipped labels: spelling `-dl` for `-d1` drops all
+    ten human judgements, and the crude matcher those labels exist to overrule
+    scores the defect 10/10 — turning the published `SURVIVED cross_file 0/10`
+    into `REFUTED`. The only trace was `hand_labelled` falling to 0.
+    """
+    fixture = load_fixture(build(tmp_path / "TS-0001"))
+    runs = clean_runs(2, [[finding("src/shipments.ts", 8, 8)], []])
+
+    with pytest.raises(LocalityError, match=r"0:TS-0001-dl"):
+        classify(fixture, transcript(runs), labels={"0:TS-0001-dl": False})
+
+
+def test_a_label_naming_a_distractor_is_refused(tmp_path: Path) -> None:
+    """Labels overrule detection of *defects*; a distractor has no run key.
+
+    The key is the one `ground_truth` really builds for this fixture's only
+    distractor — `distractor-1:naming-inconsistency`, from `manifest()` above.
+    Spelling the kind wrong instead would pass for the wrong reason: it would be
+    refused as an unknown kind, leaving the rule under test — that the distractor
+    vocabulary is not a label vocabulary — unpinned. Admitting distractors into
+    `expected` must fail this test, and with a misspelled kind it does not.
+    """
+    fixture = load_fixture(build(tmp_path / "TS-0001"))
+    runs = clean_runs(2, [[], []])
+
+    with pytest.raises(LocalityError, match=r"0:distractor-1:naming-inconsistency"):
+        classify(
+            fixture,
+            transcript(runs),
+            labels={"0:distractor-1:naming-inconsistency": True},
+        )
+
+
+def test_every_unmatched_label_is_named_not_just_the_first(tmp_path: Path) -> None:
+    """Fixing one typo at a time, a re-score per keystroke, is the slow failure."""
+    fixture = load_fixture(build(tmp_path / "TS-0001"))
+    runs = clean_runs(2, [[], []])
+
+    with pytest.raises(LocalityError) as caught:
+        classify(
+            fixture,
+            transcript(runs),
+            labels={"9:TS-0001-d1": True, "0:TS-0001-dl": False},
+        )
+
+    assert "9:TS-0001-d1" in str(caught.value)
+    assert "0:TS-0001-dl" in str(caught.value)
+
+
+def test_the_refusal_names_the_vocabulary_the_key_is_built_from(tmp_path: Path) -> None:
+    """The error has to be actionable: which runs exist, and which defect ids."""
+    fixture = load_fixture(build(tmp_path / "TS-0001"))
+    runs = clean_runs(3, [[], [], []])
+
+    with pytest.raises(LocalityError) as caught:
+        classify(fixture, transcript(runs), labels={"7:TS-0001-d1": True})
+
+    message = str(caught.value)
+    assert "[0, 1, 2]" in message
+    # Asserted with its label, not as a bare id: `"TS-0001-d1" in message` is
+    # already satisfied by the rejected key `'7:TS-0001-d1'` echoed in the
+    # unmatched list, so it matched for an unrelated reason and deleting the
+    # vocabulary clause outright left this test green.
+    assert "defects ['TS-0001-d1']" in message
+
+
+def test_the_refusal_never_names_the_index_it_just_rejected(tmp_path: Path) -> None:
+    """A gap in the middle must not be reported as a range that spans it.
+
+    A scored-run index set is not contiguous whenever a run failed or came back
+    unparseable, which `partition_runs`' three tiers guarantee recurs. Reported
+    as `min-max`, a refusal against this batch told the reader the valid indices
+    were `0-2` — naming index 1, which is not scoreable, so the only way to act
+    on the error was to disbelieve it. The rejected key here is `9`, a genuine
+    nonsense key, because a key naming the *hole* no longer raises at all.
+    """
+    fixture = load_fixture(build(tmp_path / "TS-0001"))
+    runs = clean_runs(3, [[], [], []])
+    runs[1]["parse_error"] = "no structured output on the response"
+
+    with pytest.raises(LocalityError) as caught:
+        classify(fixture, transcript(runs), labels={"9:TS-0001-d1": False})
+
+    message = str(caught.value)
+    assert "[0, 2]" in message
+    assert "0-2" not in message
+
+
+def test_the_refusal_says_an_unhonourable_label_is_not_in_its_list(tmp_path: Path) -> None:
+    """Naming the set is not enough if the reader cannot tell what is absent from it.
+
+    A reader who sees `[0, 2]` and has a label on run 1 needs to know that run 1
+    is not the thing being refused — it is reported separately and did not stop
+    the batch. Without that clause they go hunting for a typo in a key that has
+    none.
+    """
+    fixture = load_fixture(build(tmp_path / "TS-0001"))
+    runs = clean_runs(3, [[], [], []])
+    runs[1]["parse_error"] = "no structured output on the response"
+
+    with pytest.raises(LocalityError, match="reported as unhonoured"):
+        classify(fixture, transcript(runs), labels={"9:TS-0001-d1": False})
+
+
+def test_the_refusal_does_not_claim_the_label_was_dropped(tmp_path: Path) -> None:
+    """The message must describe what just happened, not what used to.
+
+    "an unmatched label is dropped and the matcher's verdict published in its
+    place" is the pre-fix behaviour this check exists to end. Left in the
+    refusal it tells the reader their labels were silently discarded, when in
+    fact nothing was scored at all.
+    """
+    fixture = load_fixture(build(tmp_path / "TS-0001"))
+    runs = clean_runs(2, [[], []])
+
+    with pytest.raises(LocalityError) as caught:
+        classify(fixture, transcript(runs), labels={"9:TS-0001-d1": True})
+
+    assert "is dropped" not in str(caught.value)
+
+
+def test_the_refusal_does_not_promise_an_absence_it_cannot_deliver(tmp_path: Path) -> None:
+    """The clause about unhonourable labels is printed on keys that *are* listed.
+
+    "A label for a run that failed or did not parse is not in this list" was
+    appended unconditionally, and two reachable cases falsify it — here, a record
+    that came back unparseable carrying no `run_index`, so it contributes no
+    unscored index and its key is refused after all. The reader is sent hunting
+    for a nonexistent index error instead of the real cause. Third consecutive
+    pass on this branch to ship a false sentence about this check's own boundary,
+    which is why the qualifier is pinned rather than the prose reviewed again.
+    """
+    fixture = load_fixture(build(tmp_path / "TS-0001"))
+    runs = clean_runs(3, [[], [], []])
+    runs[2]["parse_error"] = "no structured output on the response"
+    for record in runs:
+        record.pop("run_index")
+
+    with pytest.raises(LocalityError) as caught:
+        classify(fixture, transcript(runs), labels={"2:TS-0001-d1": True})
+
+    message = str(caught.value)
+    assert "absent from this list only when" in message
+    assert "recorded a `run_index`" in message
+
+
+def test_the_refusal_qualifies_its_clause_for_a_typo_on_an_unscoreable_run(
+    tmp_path: Path,
+) -> None:
+    """The second falsifying case: an unscoreable index with a misspelled defect.
+
+    `1:TS-0001-dl` names a run that really did come back unparseable, so the
+    unconditional clause told the reader such a key is not in the list — while
+    listing it. The defect id is what refused it, and the qualifier is what says
+    so. The suite already built this batch and asserted only that it raises.
+    """
+    fixture = load_fixture(build(tmp_path / "TS-0001"))
+    runs = clean_runs(3, [[], [], []])
+    runs[1]["parse_error"] = "no structured output on the response"
+
+    with pytest.raises(LocalityError) as caught:
+        classify(fixture, transcript(runs), labels={"1:TS-0001-dl": True})
+
+    message = str(caught.value)
+    assert "1:TS-0001-dl" in message
+    assert "absent from this list only when" in message
+    assert "is not in this list" not in message
+
+
+def test_a_long_list_of_unmatched_labels_is_truncated_and_counted(tmp_path: Path) -> None:
+    """Nine typos must report nine, show eight, and say it withheld the rest.
+
+    The count prefix is the only thing that tells a reader how many keys were
+    withheld, and the truncation is what keeps a wholly mis-keyed file from
+    printing every key it holds.
+    """
+    fixture = load_fixture(build(tmp_path / "TS-0001"))
+    runs = clean_runs(2, [[], []])
+    labels = {f"{index}:TS-0001-d1": False for index in range(20, 29)}
+
+    with pytest.raises(LocalityError) as caught:
+        classify(fixture, transcript(runs), labels=labels)
+
+    message = str(caught.value)
+    assert message.startswith("9 label(s)")
+    # Counted with the colon so the `defects ['TS-0001-d1']` tail, which is not
+    # a key, cannot be mistaken for a ninth listed key.
+    assert message.count(":TS-0001-d1'") == 8
+    assert " ..." in message
+
+
+def test_a_label_on_an_unparseable_run_scores_the_rest_and_is_reported(
+    tmp_path: Path,
+) -> None:
+    """The decided behaviour: report the unhonourable label, score the others.
+
+    Refusing the whole batch here was the first shape of the check, and it made
+    a re-run coming back unparseable turn a shipped label file into a hard
+    error against its own transcript. The run is real and the judgement about it
+    is real; only the scoring is impossible.
+    """
+    fixture = load_fixture(build(tmp_path / "TS-0001"))
+    runs = clean_runs(3, [[], [], []])
+    runs[1]["parse_error"] = "no structured output on the response"
+    labels = {f"{index}:TS-0001-d1": True for index in range(3)}
+
+    report = classify(fixture, transcript(runs), labels=labels)
+
+    assert report.unhonourable_labels == ["1:TS-0001-d1"]
+    assert report.scored == 2
+    assert report.unparseable == 1
+    # The two honoured labels still overrule the matcher; the third is counted
+    # nowhere, so `hand_labelled` falls short of the file on its own.
+    assert report.verdicts[0].hand_labelled == 2
+    assert report.verdicts[0].hits == 2
+
+
+def test_a_whole_file_off_by_one_is_refused_not_absorbed(tmp_path: Path) -> None:
+    """A uniform shift is recognised as one, not honoured key by key.
+
+    Reporting an unhonourable key is decided one key at a time, and that is what
+    lets a whole-file off-by-one through: numbering the runs from 1, the reader's
+    top key lands on the unscoreable index and is *reported* — which reads like a
+    clean batch — while every key below it shifts one place inside the scored set
+    and is honoured against the wrong run.
+
+    Reproduced on this batch, where only run 0 found the defect: the 1-based keys
+    score detection 2/2 where the correct keys score 1/2, and the only trace is
+    `hand_labelled` reading 1 — a shortfall `print_report`'s unhonourable warning
+    then explains away as a run that could not be scored. The one signal the
+    design relies on is consumed by the feature that creates the hazard.
+    """
+    fixture = load_fixture(build(tmp_path / "TS-0001"))
+    runs = clean_runs(3, [[finding("src/shipments.ts", 8, 8)], [], []])
+    runs[2]["parse_error"] = "no structured output on the response"
+
+    with pytest.raises(LocalityError, match="keyed one high"):
+        classify(
+            fixture,
+            transcript(runs),
+            labels={"1:TS-0001-d1": True, "2:TS-0001-d1": False},
+        )
+
+    # The same two judgements keyed correctly still score, so the refusal is not
+    # a revert of the unhonourable-label decision: run 0 is overruled to found,
+    # run 1 to not-found, and the unscoreable run carries no label at all.
+    report = classify(
+        fixture,
+        transcript(runs),
+        labels={"0:TS-0001-d1": True, "1:TS-0001-d1": False},
+    )
+
+    assert report.verdicts[0].hits == 1
+    assert report.verdicts[0].hand_labelled == 2
+    assert report.unhonourable_labels == []
+
+
+def test_a_correct_subset_of_labels_is_not_read_as_a_shift(tmp_path: Path) -> None:
+    """A shift is a property of the whole key set, not of keys that happen to fit.
+
+    Testing containment — every shifted key lands somewhere in `expected` —
+    refuses a *correct* label file whenever its keys sit at the top of the scored
+    range with one on the unscoreable run above them. Shifting them down one then
+    lands each on some scored index, which containment accepts and a reader would
+    never call a whole-file off-by-one.
+
+    Reproduced on the shipped batch's shape: nine scored runs, run 9 unparseable,
+    labels for runs 8 and 9 only. Both are keyed correctly; 8 scores and 9 is the
+    unhonourable report the 2026-09-10 decision requires. The `len(labelled) > 1`
+    gate does not help — two keys are enough to trip it.
+    """
+    fixture = load_fixture(build(tmp_path / "TS-0001"))
+    runs = clean_runs(10, [[finding("src/shipments.ts", 8, 8)]] + [[] for _ in range(9)])
+    runs[9]["parse_error"] = "no structured output on the response"
+
+    report = classify(
+        fixture,
+        transcript(runs),
+        labels={"8:TS-0001-d1": False, "9:TS-0001-d1": False},
+    )
+
+    assert report.unhonourable_labels == ["9:TS-0001-d1"]
+    assert report.verdicts[0].hand_labelled == 1
+
+    # The whole-file case is still refused: every scored index is covered, which
+    # is what makes it a shift rather than a subset that happens to fit.
+    with pytest.raises(LocalityError, match="keyed one high"):
+        classify(
+            fixture,
+            transcript(runs),
+            labels={f"{index + 1}:TS-0001-d1": False for index in range(9)},
+        )
+
+
+def test_a_file_keyed_one_low_is_refused_without_the_1_based_gloss(tmp_path: Path) -> None:
+    """The other direction of the shift, and the clause true in one direction only.
+
+    Both other refusal sites match `keyed one high`, so the `offset == +1` branch
+    is unpinned: flipping the ternary, or emitting the gloss unconditionally,
+    passes the suite either way. The gloss explains a file numbered from 1, which
+    is the `high` case alone — on a file keyed one *low* it would name a cause
+    that cannot produce it, which is the half of the message that was verified by
+    hand and never tested.
+    """
+    fixture = load_fixture(build(tmp_path / "TS-0001"))
+    runs = clean_runs(3)
+
+    with pytest.raises(LocalityError, match="keyed one low") as excinfo:
+        classify(
+            fixture,
+            transcript(runs),
+            labels={f"{index - 1}:TS-0001-d1": False for index in range(3)},
+        )
+
+    assert "Numbering the runs from 1" not in str(excinfo.value)
+
+
+def test_a_single_label_on_an_unscoreable_run_is_still_reported(tmp_path: Path) -> None:
+    """One key is not a set, so it cannot be read as a whole-file shift.
+
+    The shift refusal above and the unhonourable report decided on 2026-09-10
+    meet here: a lone label on a run that failed is indistinguishable from a lone
+    label written one too low, and the decision is to report it. Two keys are the
+    least that can show a *constant* shift, which is why the refusal needs them.
+    """
+    fixture = load_fixture(build(tmp_path / "TS-0001"))
+    runs = clean_runs(2, [[], []])
+    runs[0].update({"failed": True, "error": "timeout"})
+
+    report = classify(fixture, transcript(runs), labels={"0:TS-0001-d1": True})
+
+    assert report.unhonourable_labels == ["0:TS-0001-d1"]
+
+
+def test_a_label_on_a_failed_run_is_unhonourable_not_nonsense(tmp_path: Path) -> None:
+    """A failed run is as real as an unparseable one; it just produced nothing."""
+    fixture = load_fixture(build(tmp_path / "TS-0001"))
+    runs = clean_runs(2, [[], []])
+    runs[0].update({"failed": True, "error": "timeout"})
+
+    report = classify(fixture, transcript(runs), labels={"0:TS-0001-d1": True})
+
+    assert report.unhonourable_labels == ["0:TS-0001-d1"]
+    assert report.failed == 1 and report.scored == 1
+
+
+def test_print_report_shows_an_unhonourable_label(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Returning the key is only half of it; the reader has to see it.
+
+    The whole reason an unhonourable label is not an error is that it is
+    reported instead. If it reaches no output, this is a silent drop wearing a
+    field name — the exact hole this module keeps closing.
+    """
+    fixture = load_fixture(build(tmp_path / "TS-0001"))
+    runs = clean_runs(3, [[], [], []])
+    runs[1]["parse_error"] = "no structured output on the response"
+    tr = transcript(runs)
+
+    report = classify(fixture, tr, labels={"1:TS-0001-d1": True})
+    print_report(fixture, report, tr)
+
+    out = capsys.readouterr().out
+    assert "1:TS-0001-d1" in out
+    assert "could not be honoured" in out
+
+
+def test_the_two_hazards_this_check_exists_for_still_raise(tmp_path: Path) -> None:
+    """The boundary that matters: neither headline hazard names a real run.
+
+    Softening the unscoreable case must not soften these. Numbering the runs
+    from 1 walks off the end of the batch, and `-dl` for `-d1` names a defect
+    that is not in the answer key — the two mistakes measured on `TS-0001`'s own
+    shipped labels, and the reason this check raises at all.
+    """
+    fixture = load_fixture(build(tmp_path / "TS-0001"))
+    runs = clean_runs(3, [[], [], []])
+    runs[1]["parse_error"] = "no structured output on the response"
+
+    # One-based numbering: run 3 is one past the last record in the batch.
+    with pytest.raises(LocalityError, match="name nothing in this batch"):
+        classify(fixture, transcript(runs), labels={"3:TS-0001-d1": True})
+
+    # The typo, on an index that *is* unscoreable — the defect id still decides.
+    with pytest.raises(LocalityError, match="name nothing in this batch"):
+        classify(fixture, transcript(runs), labels={"1:TS-0001-dl": True})
+
+
+def test_an_unscoreable_record_with_no_run_index_is_not_given_one(
+    tmp_path: Path,
+) -> None:
+    """No invented position for a record that never recorded one.
+
+    `print_report` numbering by position and this module numbering by scored
+    position is the divergence still queued in PLAN.md. Guessing an index for an
+    unscoreable record would add a second one, so such a key stays an error.
+    """
+    fixture = load_fixture(build(tmp_path / "TS-0001"))
+    runs = clean_runs(3, [[], [], []])
+    # The *last* record is the unscoreable one, so its position (2) is not also
+    # a scored index. With the records numbered by position it would be run 2;
+    # the two scored records fall back to 0 and 1, so `2:` names nothing and
+    # must raise. Put the hole in the middle instead and this test cannot tell
+    # the two behaviours apart, because position 1 is a scored index too.
+    runs[2]["parse_error"] = "no structured output on the response"
+    for record in runs:
+        record.pop("run_index")
+
+    with pytest.raises(LocalityError, match="name nothing in this batch"):
+        classify(fixture, transcript(runs), labels={"2:TS-0001-d1": True})
+
+
+def test_a_key_that_only_looks_like_an_index_is_a_typo(tmp_path: Path) -> None:
+    """`" 1"` and `"01"` are not run 1; a near-miss key must not be excused."""
+    fixture = load_fixture(build(tmp_path / "TS-0001"))
+    runs = clean_runs(3, [[], [], []])
+    runs[1]["parse_error"] = "no structured output on the response"
+
+    # `"TS-0001-d1"` has no numeric head at all — a label file written without
+    # run prefixes, which is the case that keeps a bare `ValueError` from `int()`
+    # inside the module's error contract. Every other key in this suite parses,
+    # so without it the `except ValueError` arm is dead and `classify`, which
+    # wraps `run_indices` and not this helper, would let the `ValueError` escape.
+    for key in ("01:TS-0001-d1", " 1:TS-0001-d1", "+1:TS-0001-d1", "TS-0001-d1"):
+        with pytest.raises(LocalityError, match="name nothing in this batch"):
+            classify(fixture, transcript(runs), labels={key: True})
+
+
+def test_commentary_keys_are_not_labels_and_are_not_refused(tmp_path: Path) -> None:
+    """`_`-prefixed keys carry the reasoning behind the judgements beside them.
+
+    The convention is `assay.eval.precision.load_labels`'s, and the shipped
+    label files use it. Enforcing it only in `main`, which strips such keys on
+    the way in, would leave every other caller — the shipped-results test
+    included — handing `classify` a file it refuses to read.
+    """
+    fixture = load_fixture(build(tmp_path / "TS-0001"))
+    runs = clean_runs(MIN_RUNS_TO_VERIFY, [[finding("src/shipments.ts", 8, 8)]] + [[]] * 9)
+
+    report = classify(
+        fixture,
+        transcript(runs),
+        labels={"_README": True, "_why_run_0_counts": False, "0:TS-0001-d1": False},
+    )
+
+    assert report.verdicts[0].hand_labelled == 1
+    assert report.verdicts[0].status is Verdict.SURVIVED
+
+
+def test_labels_against_a_batch_that_scored_nothing_say_so(tmp_path: Path) -> None:
+    """The empty case must not divide by an empty index range.
+
+    The key is `5`, which names no run at all: `0` now names the failed run and
+    is reported as unhonourable rather than refused.
+    """
+    fixture = load_fixture(build(tmp_path / "TS-0001"))
+    runs = clean_runs(1, [[]])
+    runs[0].update({"failed": True, "error": "timeout"})
+
+    with pytest.raises(LocalityError, match="no run scored"):
+        classify(fixture, transcript(runs), labels={"5:TS-0001-d1": True})
+
+
+def test_every_defect_in_the_answer_key_gets_a_label_key(tmp_path: Path) -> None:
+    """`expected` and `known` are both cross products, and one defect hides it.
+
+    Both the accepted set (`expected`) and the known-defect set (`known`) are
+    built from every defect in the fixture, and the corpus holds one fixture with
+    one defect — so a `defects[:1]` mutation in either line survived the whole
+    suite. Phase 5 is corpus buildout: the first multi-defect fixture is when that
+    would surface, as a second defect's labels refused for naming nothing.
+
+    The two lines fail differently and so need separate cases. Truncating
+    `expected` refuses a valid key outright, which the labels below catch.
+    Truncating `known` is quieter: the key still fails to match, so it reaches the
+    unhonourable/nonsense fork, and a defect id that is real but not in the
+    truncated `known` is reclassified from *reported* to *raised* — the
+    2026-09-10 decision broken for every defect but the first. Only a label on an
+    unscoreable run discriminates that line, which is the last case here.
+    """
+    fixture = load_fixture(build(tmp_path / "TS-0001", text=manifest_two_defects()))
+    runs = clean_runs(2, [[], []])
+
+    report = classify(
+        fixture,
+        transcript(runs),
+        labels={"0:TS-0001-d1": True, "0:TS-0001-d2": False, "1:TS-0001-d2": True},
+    )
+
+    assert report.verdicts[0].hand_labelled == 1
+    assert report.verdicts[1].hand_labelled == 2
+    assert report.verdicts[1].hits == 1
+
+    # A third defect id is still refused: the cross product is over the answer
+    # key, not over whatever the label file names.
+    with pytest.raises(LocalityError, match="name nothing in this batch"):
+        classify(fixture, transcript(runs), labels={"0:TS-0001-d3": True})
+
+    # `known` is the line this discriminates. The second defect, labelled on a run
+    # that exists but cannot be scored, is *reported* — and is refused as nonsense
+    # the moment `known` stops covering every defect in the answer key.
+    unscoreable = clean_runs(2, [[], []])
+    unscoreable[1]["parse_error"] = "no structured output on the response"
+
+    report = classify(
+        fixture,
+        transcript(unscoreable),
+        labels={"1:TS-0001-d2": True},
+    )
+
+    assert report.unhonourable_labels == ["1:TS-0001-d2"]
+
+
+def test_a_malformed_run_index_is_refused_on_an_unscoreable_record_too(
+    tmp_path: Path,
+) -> None:
+    """One integer rule for every record, not one for the records that score.
+
+    `run_indices` refuses a non-integer `run_index` on a scored record; the set
+    of unscoreable indices filtered one out with `isinstance` and said nothing.
+    So `3.0` was an error on a scored record and invisible on the unparseable one
+    beside it — and a label naming that position then hard-failed with "name
+    nothing in this batch" rather than being reported as unhonourable, which is
+    the whole point of recording the index. A rule enforced in one of two entry
+    points is the shape of bug this module keeps closing.
+
+    `True` is in the list because `bool` is an `int` subclass: the guard
+    excluding it was the only type check such a record ever got, and nothing
+    pinned it — removing it left all 322 tests green while downgrading a refusal
+    to a report, since `1 in {True}`.
+    """
+    fixture = load_fixture(build(tmp_path / "TS-0001"))
+
+    for bad in (3.0, None, True, "first"):
+        runs = clean_runs(2, [[], []])
+        runs[1]["parse_error"] = "no structured output on the response"
+        runs[1]["run_index"] = bad
+
+        with pytest.raises(LocalityError, match="run_index must be an integer"):
+            classify(fixture, transcript(runs))
+
+        failed = clean_runs(2, [[], []])
+        failed[1].update({"failed": True, "error": "timeout", "run_index": bad})
+
+        with pytest.raises(LocalityError, match="run_index must be an integer"):
+            classify(fixture, transcript(failed))
+
+
+def test_assert_labels_match_accepts_exactly_the_keys_run_key_builds(tmp_path: Path) -> None:
+    """The check is a set difference, so it is pinned directly as well."""
+    fixture = load_fixture(build(tmp_path / "TS-0001"))
+    defects = [item for item in ground_truth(fixture) if item.is_defect]
+
+    assert_labels_match({"0:TS-0001-d1": True, "1:TS-0001-d1": False}, [0, 1], defects)
+
+    with pytest.raises(LocalityError):
+        assert_labels_match({"2:TS-0001-d1": True}, [0, 1], defects)
+
+
 # --- run identity ------------------------------------------------------------
 
 
@@ -509,21 +1119,34 @@ def test_a_repeated_run_index_is_refused(tmp_path: Path) -> None:
         classify(fixture, transcript(runs), labels={"0:TS-0001-d1": True})
 
 
-def test_a_failed_run_may_share_an_index_with_a_scored_one(tmp_path: Path) -> None:
-    """The rule guards the runs that get keyed, not every record on file.
+def test_a_failed_run_may_not_share_an_index_with_a_scored_one(tmp_path: Path) -> None:
+    """The rationale that blessed this batch is one this branch falsified.
 
-    A failed run is dropped everywhere and never carries a label, so refusing a
-    batch over its index would reject transcripts that score correctly.
+    It read: "a failed run is dropped everywhere and never carries a label, so
+    refusing a batch over its index would reject transcripts that score
+    correctly". A failed run is now exactly what a label may name — that is the
+    unhonourable-label rule — and with the index shared the key is in `expected`,
+    so the judgement about the *failed* run is honoured against the *scored* one
+    and `unhonourable_labels` stays empty. Reproduced: `hand_labelled=1`,
+    `hits=0`, nothing printed, no error.
+
+    Such a batch does not score correctly, so the exemption no longer buys
+    anything. The trigger is the one `run_indices`' own docstring names: two
+    batches concatenated, which is how a re-run gets appended.
     """
     fixture = load_fixture(build(tmp_path / "TS-0001"))
     runs = clean_runs(2, [[], []])
     runs[0].update({"failed": True, "error": "timeout"})
     runs[1]["run_index"] = 0
 
-    report = classify(fixture, transcript(runs))
+    with pytest.raises(LocalityError, match="names both a scored run"):
+        classify(fixture, transcript(runs), labels={"0:TS-0001-d1": True})
 
-    assert report.scored == 1
-    assert report.failed == 1
+    # Refused with no labels as well: the identity is wrong whether or not this
+    # invocation happens to pass a label file, and a transcript that re-scores
+    # months later must not become an error the moment one is written.
+    with pytest.raises(LocalityError, match="names both a scored run"):
+        classify(fixture, transcript(runs))
 
 
 def test_run_indices_falls_back_to_position_and_still_catches_a_collision() -> None:

@@ -265,14 +265,114 @@ Found issues, worked between PRs and ahead of phase work. Each is one branch off
       error contract. Fix: have `print_report` use the indices `classify`
       computed rather than re-deriving them — one change closes both symptoms.
       (qa-review 2026-09-09)
-      **Re-rated 2026-09-10, after the line above was closed.** Its first
-      symptom is no longer silent: `assert_labels_match` refuses a key naming no
-      scored run, so a label copied out of a divergently-numbered report now
-      raises and names the indices that do exist, instead of scoring nothing.
-      That was the whole reason this line ranked where it does. The second
-      symptom — `f"{None:>2}"` raising `TypeError` — is untouched and is now the
-      larger half, since it is an unhandled crash outside the module's error
-      contract. Both still close with the one change already named.
+      **The second symptom is closed, 2026-09-11, by a different change.**
+      `classify` now refuses a non-integer `run_index` on *every* record rather
+      than only the scored ones, so `{"run_index": null, "failed": true}` raises
+      `LocalityError` before `print_report` is ever reached. Verified end to end
+      through the CLI on the shipped transcript with run 3 rewritten that way:
+      `LocalityError: run_index must be an integer, got None at position 3`,
+      where it previously reached `print_report` and crashed with `TypeError`.
+      `print_report` still formats the raw field, so the crash survives for a
+      direct caller that skips `classify` — there is none outside the tests. The
+      first symptom is what remains of this line, and it is the whole of it.
+      **Re-rated 2026-09-10, after the line above was closed — then the
+      re-rating was itself corrected the same day, and the correction is the
+      part worth keeping.** The first pass claimed this line's first symptom was
+      "no longer silent" because `assert_labels_match` refuses a key naming no
+      scored run, and demoted the line on that basis. **That was wrong, and it
+      was wrong in the direction that loses information.** The refusal catches
+      only a copied number that names no run in the batch at all; one naming a
+      run that exists but could not be scored is reported as unhonourable
+      (2026-09-10), and one that lands inside the scored set is still silently
+      mis-keyed. That last case is untouched by either, and it is the
+      whole hazard: four records with no `run_index` and record 0 unparseable,
+      `print_report` prints runs 0-3, `classify` keys the scored records 0-2,
+      and a label written for the run printed as `2` scores the record printed
+      as `3` — `hand_labelled` reads 1, no error, wrong run. Reproduced
+      2026-09-10 before this correction was written.
+      So this line keeps its rank: its first symptom is narrowed, not closed,
+      and it is still a silent wrong published number. Narrowed once more on
+      2026-09-11 — a label file whose keys, shifted by one, reproduce the
+      *whole* scored index set is now refused as a set rather than absorbed key
+      by key, so a reader who labels every scored run by its printed number is
+      stopped (keys `1,2,3` against scored `0,1,2` raise). The worked example
+      above is not that shape and still reproduces exactly as written: it is a
+      single label for the run printed as `2`, and one key is not a set. The
+      second symptom is closed as of the same day (see above), so the change
+      named above now closes the first alone.
+- [ ] **The off-by-one shift gate counts label *keys*, not distinct run
+      indices, so a multi-defect answer key refuses a legitimate label file.**
+      `locality.py:757` gates the whole-file shift check on `len(labelled) > 1`,
+      while the discriminator it guards (`:769`) compares *index sets*. Two keys
+      on one index therefore clear the "at least two keys" bar while carrying no
+      evidence of a constant shift. Verified 2026-09-11 by probing
+      `assert_labels_match` directly: scored `[0]`, run 1 unscoreable and
+      recorded, labels `{"1:TS-0001-d1", "1:TS-0001-d2"}` over a two-defect
+      answer key raises `every one of these 2 label(s) is keyed one high`,
+      whereas the byte-identical human judgement over a one-defect key returns
+      `['1:TS-0001-d1']` as unhonourable. The same judgement, decided by how
+      many defects the *fixture* declares. It matters because the docstring's
+      own rationale at `:727-729` says this case must be reported, not refused —
+      "a lone key cannot be told apart from a judgement about a run that could
+      not be scored" is a statement about one *index*, and the guard counts
+      keys — so a shipped label file hard-fails on a run the batch legitimately
+      could not score, which is exactly the blunt refusal the third tier of
+      `partition_runs` exists to prevent. Pre-existing: the gate predates this
+      branch and the 2026-09-11 doc pass describes the discriminator correctly
+      (`:736-737`), so this is a code defect, not a documentation one.
+      Unreachable today only because every fixture has a single defect;
+      `tests/test_locality.py:110` already builds `manifest_two_defects` for the
+      neighbouring "a single-defect answer key hides it" reason, and Phase 5
+      authors twelve more fixtures by hand. Fix: gate on
+      `len({_key_index(key) for key in labelled}) > 1`, plus a test pinning the
+      two-keys-one-index shape as reported rather than refused.
+      (qa-review 2026-09-11)
+- [ ] **Reject a label *value* that is not a boolean, the way the key now is.**
+      `locality.py:1120` coerces with `bool(v)` and `classify` again at `:803`,
+      so `{"0:TS-0001-d1": "false"}` — a hand-editor quoting a JSON boolean —
+      reads as `True`. Verified 2026-09-10 by running it against the shipped
+      labels: quoting all ten flips the published verdict from `SURVIVED
+      cross_file 0/10` to `REFUTED 10/10` while `hand_labelled` still reads 10,
+      so the report looks fully hand-judged and is inverted. This is the
+      **value-side twin of the key-side hole just closed**, and it is the worse
+      of the two: a dropped key at least leaves `hand_labelled` short, where a
+      coerced value leaves every counter looking right. `precision.load_labels`
+      already refuses a non-string label value (`precision.py:122`) for exactly
+      this reason, and the project rule is reject-never-coerce. Fix: **in
+      `main`'s label load at `locality.py:1118-1120`, not in
+      `assert_labels_match`.** An earlier draft of this line prescribed the
+      helper; that would not work, because `main` coerces with `bool(v)` before
+      `classify` is ever called, so by the time the helper sees the mapping a
+      quoted `"false"` is already `True`. Validating in the helper alone would
+      cover direct `classify` callers and miss the CLI — the one path this
+      line's own reproduction uses, and the module's recurring "rule enforced in
+      one of two entry points" shape. Either validate the raw value in `main`,
+      or have `main` hand `classify` the uncoerced mapping and validate in the
+      helper for both. Do this before the `print_report` line — that one needs a
+      hand-edited transcript, this one needs a quoted `false`.
+      (qa-review 2026-09-10, prescription corrected 2026-09-10)
+- [ ] **A `--labels` file that is not a JSON object escapes the error
+      contract.** `locality.py:1119-1120` calls `raw.items()`, so a list or a
+      bare string raises `AttributeError` rather than `LocalityError`. Verified
+      2026-09-10. `precision.load_labels:113-114` guards this ("label file must
+      be a JSON object"); locality has no equivalent. Same class as the
+      `f"{None:>2}"` `TypeError` in the `print_report` line above, and it sits
+      in the same four lines as the value-coercion line, so the two may close
+      in one commit if the fix lands in `main`'s label loading rather than in
+      the helper. (qa-review 2026-09-10)
+- [ ] **A non-dict record in `runs` escapes the error contract too, and it is
+      the third site of one pattern.** `partition_runs` at `locality.py:471-472`
+      calls `r.get(...)` on every element of `transcript["runs"]`, so a
+      transcript holding `["not a record"]`, `[None]` or `[42]` raises
+      `AttributeError` rather than `LocalityError`. Verified 2026-09-11 on all
+      three. Same class as the `--labels` line above and as the `f"{None:>2}"`
+      `TypeError`, and `classify`'s `unscored` comprehension (`:775-781`) is a
+      third site that reaches raw records without a shape check. Fix: validate
+      the record shape once at `classify`'s entry, where the transcript first
+      becomes this module's problem, rather than guarding each reader — three
+      guards is the "rule enforced in one of N entry points" shape this module
+      keeps closing. Close with the `--labels` line; both are one commit.
+      (qa-review 2026-09-11)
 - [x] **Decide what a malformed `run_index` is, not just a repeated one.**
       `run_indices` (and `precision.score` before it) reached the field with a
       bare `int(...)`, so the *type* was unchecked while the uniqueness was

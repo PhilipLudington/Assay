@@ -809,8 +809,8 @@ def test_a_correct_subset_of_labels_is_not_read_as_a_shift(tmp_path: Path) -> No
 
     Reproduced on the shipped batch's shape: nine scored runs, run 9 unparseable,
     labels for runs 8 and 9 only. Both are keyed correctly; 8 scores and 9 is the
-    unhonourable report the 2026-09-10 decision requires. The `len(labelled) > 1`
-    gate does not help — two keys are enough to trip it.
+    unhonourable report the 2026-09-10 decision requires. The distinct-index gate
+    does not help — 8 and 9 are two indices, enough to open it.
     """
     fixture = load_fixture(build(tmp_path / "TS-0001"))
     runs = clean_runs(10, [[finding("src/shipments.ts", 8, 8)]] + [[] for _ in range(9)])

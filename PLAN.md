@@ -239,7 +239,7 @@ Found issues, worked between PRs and ahead of phase work. Each is one branch off
       unchanged, and four mutations — check removed, run-index-only,
       defect-id-only, commentary skip dropped — are each caught by the tests
       that should catch them.)
-- [ ] **`print_report` numbers runs on a different basis than `classify` keys
+- [x] **`print_report` numbers runs on a different basis than `classify` keys
       them.** `locality.py:795-808` enumerates **all** runs; `classify` keys by
       position within **scored** runs. Pre-existing — verified 2026-09-09 as
       identical on `main` (`classify` at :584 over `scored`, `print_report` at
@@ -300,6 +300,27 @@ Found issues, worked between PRs and ahead of phase work. Each is one branch off
       single label for the run printed as `2`, and one key is not a set. The
       second symptom is closed as of the same day (see above), so the change
       named above now closes the first alone.
+      (completed 2026-09-13 — `_run_numbers` in `assay.corpus.locality`: one
+      list of run numbers in transcript order, built by `classify` from the
+      same `run_indices` result it keys labels by, carried on
+      `LocalityReport.run_numbers`, and printed by `print_report` in place of
+      its own enumeration. Reproduced the worked example above on the pre-fix
+      tree first: the record printed as `3` carried the finding, and the label
+      `2:TS-0001-d1: false` withdrew it — `hits=0`, `hand_labelled=1`, nothing
+      raised. That record now prints as `2`. **An unscoreable record that
+      recorded no `run_index` prints `?`, not a number** — no label key can
+      name it (outcome 3 of `assert_labels_match`), so any number printed
+      beside it would be one a reader could copy into a key that is then
+      refused. `print_report` refuses a report and transcript of different
+      lengths rather than zipping them, since the printed numbers are the keys
+      and are never re-derived. The scoreability test `partition_runs` spelled
+      inline is now `_unscoreable`, shared with `_unscored_run_indices` and the
+      numbering — a third inline copy is how the numbering would drift from the
+      partition. What remains is the one outcome no check over key values can
+      see: a key *written* wrong, naming a scored run, is still absorbed; it is
+      no longer also the outcome of a key *copied* right. 333 tests green, the
+      shipped result re-scores unchanged, and the mutation that numbers a
+      scored record by its position among all runs is caught by the new test.)
 - [ ] **The off-by-one shift gate counts label *keys*, not distinct run
       indices, so a multi-defect answer key refuses a legitimate label file.**
       `locality.py:757` gates the whole-file shift check on `len(labelled) > 1`,

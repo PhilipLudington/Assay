@@ -495,8 +495,19 @@ def partition_runs(
     denominator comes to differ between two reports of the same batch.
     """
     billed = [r for r in runs if not r.get("failed")]
-    scored = [r for r in billed if not r.get("parse_error")]
+    scored = [r for r in billed if not _unscoreable(r)]
     return billed, scored
+
+
+def _unscoreable(record: dict[str, Any]) -> bool:
+    """Whether a record is one `partition_runs` leaves out of `scored`.
+
+    The one spelling of that test. `_unscored_run_indices` and `_run_numbers`
+    both walk every record on file deciding which ones `partition_runs` scored,
+    and a second spelling of the same predicate is how the two would come to
+    disagree about a record.
+    """
+    return bool(record.get("failed") or record.get("parse_error"))
 
 
 def _recorded_run_index(record: dict[str, Any], position: int) -> int | None:
@@ -535,12 +546,47 @@ def _unscored_run_indices(runs: list[dict[str, Any]]) -> set[int]:
     """
     indices: set[int] = set()
     for position, record in enumerate(runs):
-        if not (record.get("failed") or record.get("parse_error")):
+        if not _unscoreable(record):
             continue
         recorded = _recorded_run_index(record, position)
         if recorded is not None:
             indices.add(recorded)
     return indices
+
+
+def _run_numbers(runs: list[dict[str, Any]], indices: list[int]) -> list[int | None]:
+    """The number each record on file is keyed by, in transcript order.
+
+    A scored record's number is its key from `indices`, which is `run_indices`
+    over the scored records in order. A record that failed or did not parse
+    keeps the `run_index` it recorded, and is `None` when it recorded none — no
+    invented position, for the reason `_unscored_run_indices` gives.
+
+    This list is what `print_report` prints from. It used to number a record
+    by its position among *all* runs where `run_indices` falls back to the
+    position among the *scored* ones, so on a transcript whose records carried
+    no `run_index` the printed number ran ahead of the key from the first
+    unscoreable record onward, and a label copied off the report scored the
+    run next to the one it was written about. The number a reader copies is
+    now the key by construction, because there is one list.
+    """
+    keyed = iter(indices)
+    numbers: list[int | None] = []
+    for position, record in enumerate(runs):
+        if _unscoreable(record):
+            numbers.append(_recorded_run_index(record, position))
+            continue
+        index = next(keyed, None)
+        if index is None:
+            break
+        numbers.append(index)
+    if len(numbers) != len(runs) or next(keyed, None) is not None:
+        raise ValueError(
+            f"{len(indices)} scored index(es) for a transcript whose records "
+            "partition differently — the run numbers printed are the label keys, "
+            "so they are never guessed"
+        )
+    return numbers
 
 
 def run_indices(records: list[dict[str, Any]]) -> list[int]:
@@ -563,28 +609,18 @@ def run_indices(records: list[dict[str, Any]]) -> list[int]:
     which for the two *scorers*, or the two reports of one batch disagree about
     it.
 
-    "For the two scorers" is meant literally, and is not yet the whole story:
-    `print_report` below derives its own run numbers, and the number it prints
-    is what a human copies into a `--labels` file. It prints the recorded
-    `run_index` where there is one — which is every transcript `measure` writes,
-    so the two agree in practice — but *falls back* to the record's position
-    among **all** runs, where this function falls back to the position among the
-    **scored** ones. On a record carrying no `run_index` the two disagree. That
-    divergence predates this helper and is queued in PLAN.md; until it is
-    closed, this function is the single definition of the keys labels are
-    *matched* against, not of the run numbers a reader is *shown*.
-    `assert_labels_match` below narrows the blast radius but does **not** close
-    it. Which keys that check refuses is stated once, in its docstring under
-    "Where a mis-keyed label ends up"; it is not restated here, because
-    restating it is how this module's two descriptions of the boundary came to
-    disagree. What becomes of a copied *number* is not stated there either — it
-    turns on this divergence, not on that boundary. The case that survives the
-    narrowing is the silent one. Four records with
-    no `run_index`, record 0 unparseable: `print_report` prints runs 0-3, this
-    function keys the three scored records 0-2, and a label written for the run
-    printed as `2` passes the check and scores the record printed as `3`. One
-    human judgement counted against the wrong run, with `hand_labelled` reading
-    1 as though it had been honoured. Only closing the divergence fixes that.
+    "For the two scorers" is also the reader's definition. The number
+    `print_report` prints beside a run is what a human copies into a `--labels`
+    file, and it is taken from `LocalityReport.run_numbers`, which `classify`
+    builds from this function's result (`_run_numbers`). `print_report` used to
+    derive its own — the recorded `run_index`, falling back to the position
+    among **all** runs where this function falls back to the position among the
+    **scored** ones — so on a transcript whose records carried no `run_index` a
+    label copied off the report scored the run next to the one it was written
+    about, with nothing raised. Which keys `assert_labels_match` refuses is
+    stated once, in its docstring under "Where a mis-keyed label ends up"; it
+    is not restated here, because restating it is how this module's two
+    descriptions of the boundary came to disagree.
 
     Falls back to position when a record carries no `run_index` at all, which is
     what both callers did before this check existed. Mixed presence is exactly a
@@ -677,32 +713,28 @@ def assert_labels_match(
 
     1. **Absorbed silently.** Its index is a *scored* index and its defect id is
        in the answer key, so it matches as written and scores the wrong run. It
-       never becomes a candidate, so nothing below sees it. This is the open
-       case recorded in `PLAN.md` under the `print_report` numbering line, and
-       the only outcome that is silent.
+       never becomes a candidate, so nothing below sees it. This is the only
+       outcome that is silent, and no check over key values can close it: a
+       key that is wrong the way a correct key is spelled is a correct key.
     2. **Reported as unhonourable.** Its index is not scored, a failed or
        unparseable record *recorded* that index, and its defect id is in the
        answer key. All three conditions bind, and the middle one is narrower
        than it looks: `_unscored_run_indices` above contributes an index only
-       for a record that recorded one, because inventing a position for a
-       record that did not is the guesswork that makes `print_report`'s
-       numbering diverge from this module's, and one such divergence is enough.
+       for a record that recorded one, because a record that did not has no
+       number a label could name — `print_report` prints `?` beside it, from
+       the same `_run_numbers` list, rather than inventing a position.
     3. **Refused as nonsense.** Everything else — which is the whole remainder,
        not only a key past the end: an index that neither the scored set nor
        the recorded unscoreable set holds, *or* a defect id outside the answer
        key at any index whatsoever.
 
     Those three conditions are the whole boundary, and they are stated over key
-    *values*. Where a number a reader *copied off the report* lands is a
-    different question, and this list does not answer it: `print_report`
-    numbers a record that recorded no `run_index` by its position among **all**
-    runs, where `run_indices` above keys by position among the **scored** ones,
-    so from the first such record onward the printed number runs ahead of the
-    key. A copied one reaches whichever of the three outcomes its value earns
-    — outcome 1, the silent one, included. Which one it earns is not enumerable
-    here while that divergence is open (`PLAN.md`, the `print_report` numbering
-    line); closing it is what would make a copied number safe, and nothing in
-    this function can.
+    *values*. A number a reader *copied off the report* is such a value, and
+    since `print_report` prints `LocalityReport.run_numbers` — the same
+    numbering these keys are matched against — a copied number names the run
+    it was printed beside. That is what makes outcome 1 a mis-*written* key
+    rather than a mis-*copied* one; it used to be both, while `print_report`
+    numbered a record with no `run_index` by its position among all runs.
 
     Over those sits one raise decided on the key set rather than the key: a
     label file whose keys, shifted by one, reproduce the scored index set
@@ -902,6 +934,12 @@ class LocalityReport:
     #: not counted in `hand_labelled` — reported so a judgement never goes
     #: unused in silence, which is the hole this module keeps closing.
     unhonourable_labels: list[str] = field(default_factory=list)
+    #: The number each record on file is keyed by, in transcript order — the
+    #: scored index for a scored record, the recorded `run_index` for one that
+    #: failed or did not parse, `None` for such a record that recorded none.
+    #: `print_report` prints from this list rather than re-deriving it, so the
+    #: number a reader copies into a `--labels` file is the key by construction.
+    run_numbers: list[int | None] = field(default_factory=list)
 
     @property
     def settled(self) -> bool:
@@ -935,6 +973,9 @@ def classify(
         # scored records would make `3.0` an error on one record and invisible
         # on the unparseable one beside it.
         unscored = _unscored_run_indices(runs)
+        # One list of run numbers, in transcript order, for `print_report` to
+        # print from. The printed number is the label key or it is `?`.
+        numbers = _run_numbers(runs, indices)
     except ValueError as error:
         raise LocalityError(str(error)) from error
 
@@ -1024,6 +1065,7 @@ def classify(
         distractor_bites=bites,
         cost_usd=sum(float(r.get("cost_usd") or 0.0) for r in billed),
         unhonourable_labels=unhonourable,
+        run_numbers=numbers,
     )
 
 
@@ -1115,18 +1157,29 @@ def print_report(
     print("\nPer-run findings")
     print("─" * 40)
     items = ground_truth(fixture)
-    for index, record in enumerate(transcript.get("runs", [])):
+    runs = list(transcript.get("runs", []))
+    # The number printed beside a run is what a reader copies into a `--labels`
+    # file, so it comes from the report — the numbering `classify` keyed those
+    # labels by — and is never re-derived from the transcript here.
+    if len(report.run_numbers) != len(runs):
+        raise LocalityError(
+            f"report numbers {len(report.run_numbers)} run(s) but the transcript "
+            f"holds {len(runs)} — it was built from a different transcript, and the "
+            "printed run numbers are the label keys, so they are not guessed"
+        )
+    for number, record in zip(report.run_numbers, runs, strict=True):
+        # `?` for a record that failed or did not parse and recorded no
+        # `run_index`: no label key can name it, so no number is printed that a
+        # reader could copy into one.
+        shown = "?" if number is None else str(number)
         if record.get("failed"):
-            print(f"  run {record.get('run_index', index):>2}: FAILED {record.get('error')}")
+            print(f"  run {shown:>2}: FAILED {record.get('error')}")
             continue
         if record.get("parse_error"):
-            print(
-                f"  run {record.get('run_index', index):>2}: "
-                f"PARSE ERROR {record['parse_error']}"
-            )
+            print(f"  run {shown:>2}: PARSE ERROR {record['parse_error']}")
             continue
         findings = record.get("findings", [])
-        print(f"  run {record.get('run_index', index):>2}: {len(findings)} finding(s)")
+        print(f"  run {shown:>2}: {len(findings)} finding(s)")
         for finding in findings:
             if not isinstance(finding, dict):
                 continue

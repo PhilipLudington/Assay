@@ -425,6 +425,17 @@ Found issues, worked between PRs and ahead of phase work. Each is one branch off
       the duplicate guard itself — the one shape this line offered as
       un-caught was the one shape already caught. Re-probed before rewriting
       rather than reasoned about a second time.)
+- [ ] **`run_indices` refuses mixed `run_index` presence only on collision, and
+      its docstring says otherwise.** `locality.py:625-627` reads "Mixed presence
+      is exactly a way to collide, and it is caught by the same rule", and the
+      completed entry above says the same — but `run_indices([{"run_index": 5},
+      {}])` returns `[5, 1]` and `[{}, {"run_index": 1}]` returns `[0, 1]`, no
+      raise; only `[{"run_index": 1}, {}]` raises (probed 2026-09-13). No wrong
+      result is reachable — the printed number still equals the key on a mixed
+      batch, and `measure` always writes `run_index` — so this is a contract
+      overclaim, not a bug. Fix: either raise in `run_indices` when some records
+      carry `run_index` and others do not, or reword the docstring and the entry
+      above to "caught only on collision". (qa-review 2026-09-13)
 - [ ] **Give "a distractor must survive the defect's fix" an executable form.**
       The rule was adopted 2026-08-01 and is enforced by prose only. It is not
       derivable from `change.patch`: that patch adds `reservation-sweeper.ts`
@@ -457,6 +468,21 @@ Found issues, worked between PRs and ahead of phase work. Each is one branch off
       that moved `partition_runs` into `assay.corpus.locality`. Fix: one
       `distractor_key(kind)` helper in `assay.corpus`, used by both — `locality`
       can drop the index now that kinds are unique. (qa-review 2026-09-09)
+- [ ] **The shipped TS-0001 re-score never prints its report.**
+      `tests/test_shipped_results.py:38` imports `classify` alone, so the run
+      numbering a reader copies off the shipped report is unasserted against
+      the one transcript a human actually labelled. Fix: one case that calls
+      `print_report` on the shipped transcript and asserts the first and last
+      `  run ` lines, or `report.run_numbers == list(range(10))`. (qa-review
+      2026-09-13)
+- [ ] **Extract `locality.py`'s run-key cluster (1358 raw / 1091 code, at
+      Limit).** `run_key`, `_key_index`, `_shift_key`, `partition_runs`,
+      `_unscoreable`, `_recorded_run_index`, `_unscored_run_indices`,
+      `_run_numbers`, `run_indices` (~200 lines, `locality.py:451-653`) →
+      `src/assay/corpus/locality_runs.py`, with their cases mirrored into
+      `tests/test_locality_runs.py` (~350). The file has grown a net +555 code
+      lines over its last 8 commits, every one additive, and
+      `assert_labels_match` alone is ~206 raw lines. (ledger 2026-09-13)
 - [ ] **Add CI, and keep it cheap.** The repo has no `.github/workflows` at all,
       which sits badly with a project whose value rests on numbers being
       reproducible: `tests/test_shipped_results.py` guards the published tallies,

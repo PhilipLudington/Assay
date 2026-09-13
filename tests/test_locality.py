@@ -908,6 +908,94 @@ def test_print_report_shows_an_unhonourable_label(
     assert "could not be honoured" in out
 
 
+def test_the_printed_run_number_is_the_key_a_label_scores(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The number beside a run in the report is the number a label file uses.
+
+    Four records with no `run_index`, record 0 unparseable. `print_report` used
+    to number them by position among all runs — `0` to `3` — while `classify`
+    keyed the three scored records by position among the scored ones — `0` to
+    `2` — so a label copied for the run printed as `2` scored the record printed
+    as `3`, with `hand_labelled` reading 1 and nothing raised. Reproduced on the
+    pre-fix tree before this test was written.
+
+    Only the record at position 3 carries a finding on the defect, so a label
+    *withdrawing* the match tells which record it landed on: `hits` drops to 0
+    only if the label reached that record, and that record must be the one the
+    report prints as `2`.
+    """
+    fixture = load_fixture(build(tmp_path / "TS-0001"))
+    runs = clean_runs(4, [[], [], [], [finding("src/shipments.ts", 8, 8)]])
+    runs[0]["parse_error"] = "no structured output on the response"
+    for record in runs:
+        record.pop("run_index")
+    tr = transcript(runs)
+
+    report = classify(fixture, tr, labels={"2:TS-0001-d1": False})
+    print_report(fixture, report, tr)
+
+    out = capsys.readouterr().out
+    lines = [line for line in out.splitlines() if line.startswith("  run ")]
+    assert lines == [
+        "  run  ?: PARSE ERROR no structured output on the response",
+        "  run  0: 0 finding(s)",
+        "  run  1: 0 finding(s)",
+        "  run  2: 1 finding(s)",
+    ]
+    assert report.run_numbers == [None, 0, 1, 2]
+    assert report.verdicts[0].hand_labelled == 1
+    assert report.verdicts[0].hits == 0
+    assert report.unhonourable_labels == []
+
+
+def test_an_unscoreable_run_keeps_its_recorded_number_in_the_report(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A failed or unparseable run that recorded a `run_index` prints it.
+
+    That number is the one a label about that run must use to be reported as
+    unhonourable rather than refused, so it is the number the reader is shown.
+    Every transcript `measure` writes has this shape.
+    """
+    fixture = load_fixture(build(tmp_path / "TS-0001"))
+    runs = clean_runs(3, [[], [], []])
+    runs[0].update({"failed": True, "error": "timeout"})
+    runs[1]["parse_error"] = "no structured output on the response"
+    tr = transcript(runs)
+
+    report = classify(fixture, tr)
+    print_report(fixture, report, tr)
+
+    out = capsys.readouterr().out
+    lines = [line for line in out.splitlines() if line.startswith("  run ")]
+    assert lines == [
+        "  run  0: FAILED timeout",
+        "  run  1: PARSE ERROR no structured output on the response",
+        "  run  2: 0 finding(s)",
+    ]
+    assert report.run_numbers == [0, 1, 2]
+
+
+def test_print_report_refuses_a_report_built_from_another_transcript(
+    tmp_path: Path,
+) -> None:
+    """The printed numbers are the report's, so a mismatched transcript is an error.
+
+    Re-deriving them from the transcript is the divergence this closes, and
+    printing one transcript's records under another's numbers would be the same
+    mismatch by a different route.
+    """
+    fixture = load_fixture(build(tmp_path / "TS-0001"))
+    three = transcript(clean_runs(3, [[], [], []]))
+    two = transcript(clean_runs(2, [[], []]))
+
+    report = classify(fixture, three)
+
+    with pytest.raises(LocalityError, match="numbers 3 run\\(s\\) but the transcript holds 2"):
+        print_report(fixture, report, two)
+
+
 def test_the_two_hazards_this_check_exists_for_still_raise(tmp_path: Path) -> None:
     """The boundary that matters: neither headline hazard names a real run.
 
@@ -934,9 +1022,10 @@ def test_an_unscoreable_record_with_no_run_index_is_not_given_one(
 ) -> None:
     """No invented position for a record that never recorded one.
 
-    `print_report` numbering by position and this module numbering by scored
-    position is the divergence still queued in PLAN.md. Guessing an index for an
-    unscoreable record would add a second one, so such a key stays an error.
+    `print_report` prints `?` beside such a record, from the same numbering
+    `classify` keys labels by, so no number exists for a reader to copy.
+    Guessing an index for it here would put one back, so such a key stays an
+    error.
     """
     fixture = load_fixture(build(tmp_path / "TS-0001"))
     runs = clean_runs(3, [[], [], []])

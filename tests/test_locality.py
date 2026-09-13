@@ -25,6 +25,7 @@ from assay.corpus.locality import (
     MIN_RUNS_TO_VERIFY,
     LocalityError,
     Verdict,
+    _run_numbers,
     assert_labels_match,
     attribute,
     classify,
@@ -975,6 +976,49 @@ def test_an_unscoreable_run_keeps_its_recorded_number_in_the_report(
         "  run  2: 0 finding(s)",
     ]
     assert report.run_numbers == [0, 1, 2]
+
+
+def test_a_failed_run_with_no_recorded_number_prints_a_question_mark(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The `?` is printed on the FAILED branch too, not only for a parse error.
+
+    A failed record that recorded no `run_index` has no key a label could name,
+    so the number shown beside it must be one a reader cannot copy. The parse
+    error case is pinned above; this is the other branch of the same rule.
+    """
+    fixture = load_fixture(build(tmp_path / "TS-0001"))
+    runs = clean_runs(3, [[], [], []])
+    for record in runs:
+        record.pop("run_index")
+    runs[0].update({"failed": True, "error": "timeout"})
+    tr = transcript(runs)
+
+    report = classify(fixture, tr)
+    print_report(fixture, report, tr)
+
+    out = capsys.readouterr().out
+    lines = [line for line in out.splitlines() if line.startswith("  run ")]
+    assert lines == [
+        "  run  ?: FAILED timeout",
+        "  run  0: 0 finding(s)",
+        "  run  1: 0 finding(s)",
+    ]
+    assert report.run_numbers == [None, 0, 1]
+
+
+def test_run_numbers_refuses_indices_that_partition_the_transcript_differently() -> None:
+    """The guard `classify` cannot reach: too few keys, and too many.
+
+    `classify` always hands `_run_numbers` the indices of exactly the records
+    it scored, so the length check is dead under every `classify` test. It is
+    still the one thing standing between a mis-partitioned batch and a printed
+    number that is not a key, so it is pinned directly, in both directions.
+    """
+    with pytest.raises(ValueError, match="partition differently"):
+        _run_numbers([{"findings": []}], [])
+    with pytest.raises(ValueError, match="partition differently"):
+        _run_numbers([{"findings": []}], [0, 1])
 
 
 def test_print_report_refuses_a_report_built_from_another_transcript(

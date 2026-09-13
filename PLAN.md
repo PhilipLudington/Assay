@@ -239,7 +239,7 @@ Found issues, worked between PRs and ahead of phase work. Each is one branch off
       unchanged, and four mutations — check removed, run-index-only,
       defect-id-only, commentary skip dropped — are each caught by the tests
       that should catch them.)
-- [ ] **`print_report` numbers runs on a different basis than `classify` keys
+- [x] **`print_report` numbers runs on a different basis than `classify` keys
       them.** `locality.py:795-808` enumerates **all** runs; `classify` keys by
       position within **scored** runs. Pre-existing — verified 2026-09-09 as
       identical on `main` (`classify` at :584 over `scored`, `print_report` at
@@ -300,6 +300,27 @@ Found issues, worked between PRs and ahead of phase work. Each is one branch off
       single label for the run printed as `2`, and one key is not a set. The
       second symptom is closed as of the same day (see above), so the change
       named above now closes the first alone.
+      (completed 2026-09-13 — `_run_numbers` in `assay.corpus.locality`: one
+      list of run numbers in transcript order, built by `classify` from the
+      same `run_indices` result it keys labels by, carried on
+      `LocalityReport.run_numbers`, and printed by `print_report` in place of
+      its own enumeration. Reproduced the worked example above on the pre-fix
+      tree first: the record printed as `3` carried the finding, and the label
+      `2:TS-0001-d1: false` withdrew it — `hits=0`, `hand_labelled=1`, nothing
+      raised. That record now prints as `2`. **An unscoreable record that
+      recorded no `run_index` prints `?`, not a number** — no label key can
+      name it (outcome 3 of `assert_labels_match`), so any number printed
+      beside it would be one a reader could copy into a key that is then
+      refused. `print_report` refuses a report and transcript of different
+      lengths rather than zipping them, since the printed numbers are the keys
+      and are never re-derived. The scoreability test `partition_runs` spelled
+      inline is now `_unscoreable`, shared with `_unscored_run_indices` and the
+      numbering — a third inline copy is how the numbering would drift from the
+      partition. What remains is the one outcome no check over key values can
+      see: a key *written* wrong, naming a scored run, is still absorbed; it is
+      no longer also the outcome of a key *copied* right. 333 tests green, the
+      shipped result re-scores unchanged, and the mutation that numbers a
+      scored record by its position among all runs is caught by the new test.)
 - [ ] **The off-by-one shift gate counts label *keys*, not distinct run
       indices, so a multi-defect answer key refuses a legitimate label file.**
       `locality.py:757` gates the whole-file shift check on `len(labelled) > 1`,
@@ -404,6 +425,17 @@ Found issues, worked between PRs and ahead of phase work. Each is one branch off
       the duplicate guard itself — the one shape this line offered as
       un-caught was the one shape already caught. Re-probed before rewriting
       rather than reasoned about a second time.)
+- [ ] **`run_indices` refuses mixed `run_index` presence only on collision, and
+      its docstring says otherwise.** `locality.py:625-627` reads "Mixed presence
+      is exactly a way to collide, and it is caught by the same rule", and the
+      completed entry above says the same — but `run_indices([{"run_index": 5},
+      {}])` returns `[5, 1]` and `[{}, {"run_index": 1}]` returns `[0, 1]`, no
+      raise; only `[{"run_index": 1}, {}]` raises (probed 2026-09-13). No wrong
+      result is reachable — the printed number still equals the key on a mixed
+      batch, and `measure` always writes `run_index` — so this is a contract
+      overclaim, not a bug. Fix: either raise in `run_indices` when some records
+      carry `run_index` and others do not, or reword the docstring and the entry
+      above to "caught only on collision". (qa-review 2026-09-13)
 - [ ] **Give "a distractor must survive the defect's fix" an executable form.**
       The rule was adopted 2026-08-01 and is enforced by prose only. It is not
       derivable from `change.patch`: that patch adds `reservation-sweeper.ts`
@@ -436,6 +468,21 @@ Found issues, worked between PRs and ahead of phase work. Each is one branch off
       that moved `partition_runs` into `assay.corpus.locality`. Fix: one
       `distractor_key(kind)` helper in `assay.corpus`, used by both — `locality`
       can drop the index now that kinds are unique. (qa-review 2026-09-09)
+- [ ] **The shipped TS-0001 re-score never prints its report.**
+      `tests/test_shipped_results.py:38` imports `classify` alone, so the run
+      numbering a reader copies off the shipped report is unasserted against
+      the one transcript a human actually labelled. Fix: one case that calls
+      `print_report` on the shipped transcript and asserts the first and last
+      `  run ` lines, or `report.run_numbers == list(range(10))`. (qa-review
+      2026-09-13)
+- [ ] **Extract `locality.py`'s run-key cluster (1358 raw / 1091 code, at
+      Limit).** `run_key`, `_key_index`, `_shift_key`, `partition_runs`,
+      `_unscoreable`, `_recorded_run_index`, `_unscored_run_indices`,
+      `_run_numbers`, `run_indices` (~200 lines, `locality.py:451-653`) →
+      `src/assay/corpus/locality_runs.py`, with their cases mirrored into
+      `tests/test_locality_runs.py` (~350). The file has grown a net +555 code
+      lines over its last 8 commits, every one additive, and
+      `assert_labels_match` alone is ~206 raw lines. (ledger 2026-09-13)
 - [ ] **Add CI, and keep it cheap.** The repo has no `.github/workflows` at all,
       which sits badly with a project whose value rests on numbers being
       reproducible: `tests/test_shipped_results.py` guards the published tallies,

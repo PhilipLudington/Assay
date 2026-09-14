@@ -414,7 +414,7 @@ Found issues, worked between PRs and ahead of phase work. Each is one branch off
       that cannot live in the helper, since a list never reaches it as a
       mapping. Pinned through `main` with a JSON list. The line above says the
       rest.)
-- [ ] **A non-dict record in `runs` escapes the error contract too, and it is
+- [x] **A non-dict record in `runs` escapes the error contract too, and it is
       the third site of one pattern.** `partition_runs` at `locality.py:471-472`
       calls `r.get(...)` on every element of `transcript["runs"]`, so a
       transcript holding `["not a record"]`, `[None]` or `[42]` raises
@@ -431,6 +431,17 @@ Found issues, worked between PRs and ahead of phase work. Each is one branch off
       loader and in `assert_labels_match`, and this one belongs at `classify`'s
       entry over the transcript — a different function, so its own commit and
       its own item.)
+      (completed 2026-09-14 — the prescribed check, one `isinstance` loop at
+      `classify`'s entry right after `runs` is read, raising `LocalityError`
+      naming the position and the type it found. Reproduced all three shapes
+      on `main` first, plus a nested list; failing tests committed first —
+      four cases through `classify` with the bad record behind a clean one so
+      the message has to say *where*, and one through `main --from`. The
+      readers downstream are untouched: `partition_runs`, `_unscoreable` and
+      `_recorded_run_index` still take `dict` and now only ever get one. 351
+      tests green, the shipped result re-scores unchanged. `BUG.md` Bug 1
+      stays deferred: it covers the transcript file's own shape and JSON
+      syntax in `main`, which this entry check never sees.)
 - [x] **Decide what a malformed `run_index` is, not just a repeated one.**
       `run_indices` (and `precision.score` before it) reached the field with a
       bare `int(...)`, so the *type* was unchecked while the uniqueness was

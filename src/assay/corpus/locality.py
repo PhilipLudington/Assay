@@ -992,6 +992,18 @@ def classify(
     labels = labels or {}
     runs = list(transcript.get("runs", []))
 
+    # One shape check, here, where the transcript first becomes this module's
+    # problem. `partition_runs`, `_unscoreable` and `_recorded_run_index` each
+    # reach a raw record with `.get`, and a guard in every reader is the "rule
+    # enforced in one of N entry points" shape this module keeps closing; a
+    # record that was not an object escaped the first of them as AttributeError.
+    for position, record in enumerate(runs):
+        if not isinstance(record, dict):
+            raise LocalityError(
+                f"runs[{position}] is not a JSON object, got {type(record).__name__} "
+                "— a transcript's runs are one object per run, as `measure` writes them"
+            )
+
     # Three tiers, not two — see `partition_runs`. Scoring an unparseable run as
     # "found nothing" would depress detection and could turn a refutable
     # cross_file claim into a surviving one.

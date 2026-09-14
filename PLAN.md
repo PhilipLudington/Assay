@@ -358,7 +358,7 @@ Found issues, worked between PRs and ahead of phase work. Each is one branch off
       not weaken it. The docstring sentence that said "two keys are the least
       that can show a constant shift" now says indices. 336 tests green, the
       shipped result re-scores unchanged, no other source touched.)
-- [ ] **Reject a label *value* that is not a boolean, the way the key now is.**
+- [x] **Reject a label *value* that is not a boolean, the way the key now is.**
       `locality.py:1120` coerces with `bool(v)` and `classify` again at `:803`,
       so `{"0:TS-0001-d1": "false"}` — a hand-editor quoting a JSON boolean —
       reads as `True`. Verified 2026-09-10 by running it against the shipped
@@ -382,7 +382,20 @@ Found issues, worked between PRs and ahead of phase work. Each is one branch off
       helper for both. Do this before the `print_report` line — that one needs a
       hand-edited transcript, this one needs a quoted `false`.
       (qa-review 2026-09-10, prescription corrected 2026-09-10)
-- [ ] **A `--labels` file that is not a JSON object escapes the error
+      (completed 2026-09-14 — the second of the line's two options: `main` now
+      hands `classify` the mapping uncoerced, through a `load_labels` that
+      neither strips nor casts, and the boolean check lives in
+      `assert_labels_match` beside the commentary skip, so the CLI and every
+      direct `classify` caller are held to one rule. Reject, never coerce: `0`
+      and `1` are refused with the strings, because coercion agreeing by
+      accident is not the file being written in booleans — the rule
+      `run_indices` already applies to an index. Failing tests committed first
+      (seven value cases through `classify`, the quoted `"false"` through
+      `main`, all `DID NOT RAISE` on the unfixed tree), then the fix. The
+      ten-label reproduction above is now refused naming all ten keys; the
+      shipped result re-scores unchanged; 345 tests green. Closed the line
+      below in the same fix commit, as that line said it might.)
+- [x] **A `--labels` file that is not a JSON object escapes the error
       contract.** `locality.py:1119-1120` calls `raw.items()`, so a list or a
       bare string raises `AttributeError` rather than `LocalityError`. Verified
       2026-09-10. `precision.load_labels:113-114` guards this ("label file must
@@ -391,6 +404,12 @@ Found issues, worked between PRs and ahead of phase work. Each is one branch off
       in the same four lines as the value-coercion line, so the two may close
       in one commit if the fix lands in `main`'s label loading rather than in
       the helper. (qa-review 2026-09-10)
+      (completed 2026-09-14 — `load_labels` in `assay.corpus.locality`, the
+      shape check and nothing else: `json.loads`, `isinstance(raw, dict)` or
+      `LocalityError`, mirroring `precision.load_labels`. It is the one check
+      that cannot live in the helper, since a list never reaches it as a
+      mapping. Pinned through `main` with a JSON list. The line above says the
+      rest.)
 - [ ] **A non-dict record in `runs` escapes the error contract too, and it is
       the third site of one pattern.** `partition_runs` at `locality.py:471-472`
       calls `r.get(...)` on every element of `transcript["runs"]`, so a
@@ -404,6 +423,10 @@ Found issues, worked between PRs and ahead of phase work. Each is one branch off
       guards is the "rule enforced in one of N entry points" shape this module
       keeps closing. Close with the `--labels` line; both are one commit.
       (qa-review 2026-09-11)
+      (not closed with it, 2026-09-14: the `--labels` fix landed in a label
+      loader and in `assert_labels_match`, and this one belongs at `classify`'s
+      entry over the transcript — a different function, so its own commit and
+      its own item.)
 - [x] **Decide what a malformed `run_index` is, not just a repeated one.**
       `run_indices` (and `precision.score` before it) reached the field with a
       bare `int(...)`, so the *type* was unchecked while the uniqueness was

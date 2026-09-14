@@ -414,7 +414,7 @@ Found issues, worked between PRs and ahead of phase work. Each is one branch off
       that cannot live in the helper, since a list never reaches it as a
       mapping. Pinned through `main` with a JSON list. The line above says the
       rest.)
-- [ ] **A non-dict record in `runs` escapes the error contract too, and it is
+- [x] **A non-dict record in `runs` escapes the error contract too, and it is
       the third site of one pattern.** `partition_runs` at `locality.py:471-472`
       calls `r.get(...)` on every element of `transcript["runs"]`, so a
       transcript holding `["not a record"]`, `[None]` or `[42]` raises
@@ -431,6 +431,22 @@ Found issues, worked between PRs and ahead of phase work. Each is one branch off
       loader and in `assert_labels_match`, and this one belongs at `classify`'s
       entry over the transcript — a different function, so its own commit and
       its own item.)
+      (completed 2026-09-14 — one `isinstance` loop naming the position and
+      the type it found. Reproduced all three shapes on `main` first, plus a
+      nested list; failing tests committed first — four cases through
+      `classify` with the bad record behind a clean one so the message has to
+      say *where*, and one through `main --from`. **The check first landed at
+      `classify`'s entry, as this line prescribed, and the same-day review
+      found that held the rule for one of the two scorers**: `precision.score`
+      reaches the same shared `partition_runs` and still escaped as
+      `AttributeError`. It now lives in `partition_runs` itself, raising
+      `ValueError` that each caller re-raises as its own type — the reason that
+      helper is shared is the reason the check belongs in it. `_unscoreable`
+      and `_recorded_run_index` are untouched and, through either scorer, now
+      only ever get a `dict`. 352 tests green, the shipped result re-scores
+      unchanged. `BUG.md` Bug 1 stays deferred: it covers the transcript file's
+      own shape and JSON syntax in `main`, and the `runs` field being something
+      other than a list, none of which this check sees.)
 - [x] **Decide what a malformed `run_index` is, not just a repeated one.**
       `run_indices` (and `precision.score` before it) reached the field with a
       bare `int(...)`, so the *type* was unchecked while the uniqueness was

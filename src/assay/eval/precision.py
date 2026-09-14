@@ -195,8 +195,8 @@ def score(
     rise for no reason but incomplete work.
     """
     runs = list(transcript.get("runs", []))
-    billed, scored_runs = partition_runs(runs)
     try:
+        billed, scored_runs = partition_runs(runs)
         indices = run_indices(scored_runs)
     except ValueError as error:
         raise PrecisionError(str(error)) from error

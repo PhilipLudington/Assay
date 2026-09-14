@@ -261,6 +261,21 @@ def test_a_malformed_run_index_reaches_the_caller_as_its_own_error(fixture) -> N
         score(fixture, batch, {finding_key(0, 0): "other"})
 
 
+def test_a_run_record_that_is_not_an_object_is_refused(fixture) -> None:  # type: ignore[no-untyped-def]
+    """The record-shape rule holds for both scorers, not one.
+
+    `assay.corpus.locality.classify` refuses a non-object record; `score`
+    reached the same shared `partition_runs` with the same transcript and
+    escaped as `AttributeError` from `.get`. The rule lives where the two
+    scorers already share their definition of which runs count.
+    """
+    batch = transcript([run(0, 1)])
+    batch["runs"].append("not a record")
+
+    with pytest.raises(PrecisionError, match=r"runs\[1\] is not a JSON object, got str"):
+        score(fixture, batch, {finding_key(0, 0): "other"})
+
+
 def test_an_unparseable_run_may_share_an_index_with_a_scored_one(fixture) -> None:  # type: ignore[no-untyped-def]
     """The rule guards the runs that get keyed, not every record on file.
 

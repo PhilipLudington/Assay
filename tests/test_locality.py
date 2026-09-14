@@ -1497,6 +1497,51 @@ def test_a_malformed_run_index_reaches_the_caller_as_its_own_error(tmp_path: Pat
         classify(fixture, transcript(runs))
 
 
+@pytest.mark.parametrize(
+    ("record", "type_name"),
+    [("not a record", "str"), (None, "NoneType"), (42, "int"), (["a", "list"], "list")],
+    ids=["text", "null", "int", "list"],
+)
+def test_a_run_record_that_is_not_an_object_is_refused(
+    tmp_path: Path, record: Any, type_name: str
+) -> None:
+    """A record that is not a JSON object fails the module's own way.
+
+    `partition_runs` calls `.get(...)` on every element of `runs`, so a
+    transcript holding `["not a record"]`, `[None]` or `[42]` escaped as
+    `AttributeError` rather than `LocalityError` — the third site of the shape
+    the `--labels` list and the `f"{None:>2}"` crash were. Checked once, in
+    `partition_runs`, which both scorers call before any reader reaches a raw
+    record: a guard in each reader, or at each scorer's entry, is the "rule
+    enforced in one of N entry points" shape this module keeps closing. The
+    sibling in `tests/test_precision.py` pins the other scorer.
+
+    The bad record sits at position 1 behind a clean one so the refusal has to
+    name where it is, not just that it is — and the type it found, which is the
+    half that tells a reader what their transcript holds.
+    """
+    fixture = load_fixture(build(tmp_path / "TS-0001"))
+    runs: list[Any] = clean_runs(1, [[]]) + [record]
+
+    with pytest.raises(
+        LocalityError, match=rf"runs\[1\] is not a JSON object, got {type_name}"
+    ):
+        classify(fixture, transcript(runs))
+
+
+def test_a_run_record_that_is_not_an_object_is_refused_through_the_cli(
+    tmp_path: Path,
+) -> None:
+    """The same refusal reaches a `--from` re-score, which is how a hand-edited
+    or foreign transcript arrives months later."""
+    fixture_root = build(tmp_path / "TS-0001")
+    stored = tmp_path / "t.json"
+    stored.write_text(json.dumps(transcript(["not a record"])), encoding="utf-8")
+
+    with pytest.raises(LocalityError, match=r"runs\[0\] is not a JSON object"):
+        main([str(fixture_root), "--from", str(stored)])
+
+
 def test_every_repeated_index_is_named_not_just_the_first() -> None:
     with pytest.raises(ValueError, match=r"\[2, 5\]"):
         run_indices(

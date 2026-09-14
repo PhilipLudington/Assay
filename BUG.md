@@ -26,12 +26,23 @@ walked past the identical hole for `--from`, and past the syntax hole for both. 
 other malformed input in this module — a repeated or non-integer `run_index`, a
 non-object label file, a non-boolean label value — is refused as `LocalityError`; these
 two are the last raw-exception paths on the CLI's own inputs.
+**The `runs` field's own shape is the same hole one level down** (added 2026-09-14,
+from the review of `reject-non-dict-run-records`): `classify` does
+`list(transcript.get("runs", []))` at `:993`, so a transcript whose `runs` is present
+but not a list escapes before the record-shape check that branch added one line below
+— `null` or `42` as a raw `TypeError`, and a string or object is iterated into
+characters or keys and refused with a `runs[0] is not a JSON object` message that
+points at an element the file does not hold. `assay.eval.precision.score` has the same
+line (`precision.py:197`). The fix is one `isinstance(runs, list)` check at the same
+site as the record check, wherever that check ends up living.
 
 **Steps to reproduce:**
 1. `printf '{' > bad.json` and run
    `.venv/bin/python -m assay.corpus.locality corpus/ts/TS-0001-reservation-double-release --from results/locality/TS-0001-20260731T170244Z.json --labels bad.json`
 2. `echo '["not","a","transcript"]' > list.json` and run
    `.venv/bin/python -m assay.corpus.locality corpus/ts/TS-0001-reservation-double-release --from list.json`
+3. `echo '{"fixture": "TS-0001", "runs": null}' > null-runs.json` and run
+   `.venv/bin/python -m assay.corpus.locality corpus/ts/TS-0001-reservation-double-release --from null-runs.json`
 
 **Expected:** `LocalityError` naming the file and what is wrong with it, the way
 `load_labels` does for a non-object label file.
@@ -39,10 +50,15 @@ two are the last raw-exception paths on the CLI's own inputs.
 **Actual:** Step 1 raises `json.decoder.JSONDecodeError: Expecting property name
 enclosed in double quotes: line 1 column 2 (char 1)`; step 2 raises `AttributeError:
 'list' object has no attribute 'get'`. Both reproduce identically on `main`
-(verified 2026-09-14).
+(verified 2026-09-14). Step 3 raises `TypeError: 'NoneType' object is not iterable`
+(verified 2026-09-14 on `reject-non-dict-run-records`; the line is unchanged from
+`main`).
 
 **Found by:** /qa-review on `reject-non-boolean-label-values`, 2026-09-14 — Test
 Coverage (the syntax half) and Generalist (the shape half); verified by probe and by
-reading `locality.py:993`, `:1369`, `:1380`, `:1384`.
+reading `locality.py:993`, `:1369`, `:1380`, `:1384`. The `runs`-field shape: /qa-review
+on `reject-non-dict-run-records`, 2026-09-14 — Generalist, with Security and Test
+Coverage listing the same as WATCH; verified by main-loop probe of `classify` with
+`runs` set to `null`, `42` and `"abc"`.
 
 ---

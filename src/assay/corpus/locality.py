@@ -493,7 +493,18 @@ def partition_runs(
     Defined once, here, because `assay.eval.precision` scores the same
     transcripts. Two implementations of "which runs count" is how a scored-run
     denominator comes to differ between two reports of the same batch.
+
+    The record-shape check lives here for the same reason: it has to hold for
+    both scorers, and this is the first line of either that reads a record. A
+    record that is not an object is refused as `ValueError`, which each caller
+    re-raises as its own type.
     """
+    for position, record in enumerate(runs):
+        if not isinstance(record, dict):
+            raise ValueError(
+                f"runs[{position}] is not a JSON object, got {type(record).__name__} "
+                "— a transcript's runs are one object per run, as `measure` writes them"
+            )
     billed = [r for r in runs if not r.get("failed")]
     scored = [r for r in billed if not _unscoreable(r)]
     return billed, scored
@@ -992,23 +1003,13 @@ def classify(
     labels = labels or {}
     runs = list(transcript.get("runs", []))
 
-    # One shape check, here, where the transcript first becomes this module's
-    # problem. `partition_runs`, `_unscoreable` and `_recorded_run_index` each
-    # reach a raw record with `.get`, and a guard in every reader is the "rule
-    # enforced in one of N entry points" shape this module keeps closing; a
-    # record that was not an object escaped the first of them as AttributeError.
-    for position, record in enumerate(runs):
-        if not isinstance(record, dict):
-            raise LocalityError(
-                f"runs[{position}] is not a JSON object, got {type(record).__name__} "
-                "— a transcript's runs are one object per run, as `measure` writes them"
-            )
-
     # Three tiers, not two — see `partition_runs`. Scoring an unparseable run as
     # "found nothing" would depress detection and could turn a refutable
-    # cross_file claim into a surviving one.
-    billed, scored = partition_runs(runs)
+    # cross_file claim into a surviving one. It also refuses a record that is
+    # not an object, for both scorers at once — not here, where only this
+    # scorer would be held to it.
     try:
+        billed, scored = partition_runs(runs)
         indices = run_indices(scored)
         # The runs that exist — billed, or failed — but cannot be scored. The
         # same integer refusal applies to them: a rule that held only for the

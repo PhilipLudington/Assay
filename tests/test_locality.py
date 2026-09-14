@@ -1154,9 +1154,10 @@ def test_commentary_keys_are_not_labels_and_are_not_refused(tmp_path: Path) -> N
     """`_`-prefixed keys carry the reasoning behind the judgements beside them.
 
     The convention is `assay.eval.precision.load_labels`'s, and the shipped
-    label files use it. Enforcing it only in `main`, which strips such keys on
-    the way in, would leave every other caller — the shipped-results test
-    included — handing `classify` a file it refuses to read.
+    label files use it. Enforcing it only in `main` — which once stripped such
+    keys on the way in, and no longer does — would leave every other caller,
+    the shipped-results test included, handing `classify` a file it refuses to
+    read.
     """
     fixture = load_fixture(build(tmp_path / "TS-0001"))
     runs = clean_runs(MIN_RUNS_TO_VERIFY, [[finding("src/shipments.ts", 8, 8)]] + [[]] * 9)

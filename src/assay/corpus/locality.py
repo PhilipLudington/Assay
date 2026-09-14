@@ -695,6 +695,17 @@ def assert_labels_match(
     `classify` the file as read. A rule enforced in one of two entry points is
     the shape of bug this module keeps closing.
 
+    Values are checked here for the same reason, and before any key is: a label
+    is a boolean or it is refused. `main` used to coerce with `bool(v)`, so a
+    hand-editor quoting a JSON boolean turned `"false"` into `True` — measured
+    on the shipped labels, quoting all ten flipped `SURVIVED cross_file 0/10`
+    to `REFUTED 10/10` with `hand_labelled` still reading 10. That is the
+    value-side twin of every keying mismatch above and the quieter one: a
+    dropped key at least leaves `hand_labelled` short, a coerced value leaves
+    every counter looking right. `0` and `1` are refused with the rest —
+    coercion agreeing by accident is not the same as the file being written in
+    booleans — which is the rule `run_indices` already applies to an index.
+
     **Why an unhonourable key is not an error.** Refusing every unmatched key
     was the first shape of this check, and it was too blunt: `partition_runs`'
     third tier says a run can be billed and still unscoreable, so one re-run
@@ -782,6 +793,19 @@ def assert_labels_match(
     `str(int(...))`; a key whose head does not is outcome 3 like any other.
     """
     labelled = [key for key in labels if key[:1] != "_"]
+    # Reject, never coerce. Checked before the keys so a file that was not
+    # written in booleans is refused as that, rather than as whichever of its
+    # keys happened to miss first.
+    unboolean = sorted(key for key in labelled if not isinstance(labels[key], bool))
+    if unboolean:
+        shown = ", ".join(f"{key}: {labels[key]!r}" for key in unboolean[:5])
+        more = f" (and {len(unboolean) - 5} more)" if len(unboolean) > 5 else ""
+        raise LocalityError(
+            f"label value is not a boolean for {len(unboolean)} key(s): {shown}{more} "
+            "— a label is JSON true or false, never a string or a number; a "
+            "quoted \"false\" would otherwise read as true with every counter "
+            "looking right"
+        )
     expected = {run_key(index, defect.id) for index in indices for defect in defects}
     candidates = sorted(key for key in labelled if key not in expected)
     if not candidates:
@@ -1023,7 +1047,9 @@ def classify(
             key = run_key(index, target_defect.id)
             if key in labels:
                 labelled[target_defect.id] += 1
-                was_found = bool(labels[key])
+                # A boolean by construction: `assert_labels_match` refused
+                # anything else above. Coercing here would re-open the hole.
+                was_found = labels[key]
             else:
                 was_found = target_defect.id in matched
             if was_found:
@@ -1325,6 +1351,27 @@ def measure(fixture: Fixture, args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def load_labels(path: Path) -> dict[str, Any]:
+    """Reads a `--labels` file as written, refusing only what is not a mapping.
+
+    No coercion and no stripping on the way in. `assert_labels_match` skips the
+    `_`-prefixed commentary and refuses a non-boolean value, and it does so for
+    every caller; a rule applied here would hold for the CLI and for nothing
+    else, which is the one-of-two-entry-points shape this module keeps closing.
+    `main` did exactly that once, in the other direction — it coerced with
+    `bool(v)` before the helper ever saw the mapping, so a quoted `"false"`
+    arrived as `True` and there was nothing left to refuse.
+
+    What only this function can see is the file's own shape: a list or a bare
+    string never reaches the helper as a mapping at all, and `.items()` on it
+    would escape as `AttributeError` rather than `LocalityError`.
+    """
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise LocalityError(f"{path}: label file must be a JSON object")
+    return raw
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     fixture = load_fixture(args.fixture)
@@ -1351,8 +1398,7 @@ def main(argv: list[str] | None = None) -> int:
 
     labels: dict[str, bool] = {}
     if args.labels:
-        raw = json.loads(args.labels.read_text(encoding="utf-8"))
-        labels = {k: bool(v) for k, v in raw.items() if not k.startswith("_")}
+        labels = load_labels(args.labels)
 
     report = classify(fixture, transcript, window=args.window, labels=labels)
     print_report(fixture, report, transcript)

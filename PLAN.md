@@ -390,11 +390,15 @@ Found issues, worked between PRs and ahead of phase work. Each is one branch off
       and `1` are refused with the strings, because coercion agreeing by
       accident is not the file being written in booleans — the rule
       `run_indices` already applies to an index. Failing tests committed first
-      (seven value cases through `classify`, the quoted `"false"` through
+      (six value cases through `classify`, the quoted `"false"` through
       `main`, all `DID NOT RAISE` on the unfixed tree), then the fix. The
-      ten-label reproduction above is now refused naming all ten keys; the
-      shipped result re-scores unchanged; 345 tests green. Closed the line
-      below in the same fix commit, as that line said it might.)
+      ten-label reproduction above is now refused counting all ten keys and
+      naming the first five — the message caps what it lists at five and says
+      how many more, which the same-day review found this note and the fix
+      commit's body both overstated as "naming all ten"; the shipped result
+      re-scores unchanged; 345 tests green, 346 once the review's truncation
+      test landed. Closed the line below in the same fix commit, as that line
+      said it might.)
 - [x] **A `--labels` file that is not a JSON object escapes the error
       contract.** `locality.py:1119-1120` calls `raw.items()`, so a list or a
       bare string raises `AttributeError` rather than `LocalityError`. Verified

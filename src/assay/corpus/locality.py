@@ -689,11 +689,11 @@ def assert_labels_match(
     Keys prefixed with `_` are commentary and are skipped, the same convention
     `assay.eval.precision.load_labels` documents: a label file is where the
     reasoning behind a hand judgement lives, and it has to sit beside the labels
-    it explains. The skip belongs here rather than only in `main`, which strips
-    them on the way in, because the shipped label files carry commentary and
-    every other caller — `tests/test_shipped_results.py` included — hands
-    `classify` the file as read. A rule enforced in one of two entry points is
-    the shape of bug this module keeps closing.
+    it explains. The skip lives here and nowhere else — `main` used to strip
+    such keys on the way in, and no longer does — because the shipped label
+    files carry commentary and every caller, `tests/test_shipped_results.py`
+    included, hands `classify` the file as read. A rule enforced in one of two
+    entry points is the shape of bug this module keeps closing.
 
     Values are checked here for the same reason, and before any key is: a label
     is a boolean or it is refused. `main` used to coerce with `bool(v)`, so a

@@ -1215,6 +1215,25 @@ def test_a_label_value_that_is_not_a_boolean_is_refused(tmp_path: Path, value: A
         classify(fixture, transcript(runs), labels={"0:TS-0001-d1": value})
 
 
+def test_a_long_list_of_non_boolean_values_is_truncated_and_counted(tmp_path: Path) -> None:
+    """Ten quoted values — the shipped file with every boolean quoted — are
+    refused counting all ten and naming the first five, so the message stays
+    readable and the count still says how much of the file is wrong."""
+    fixture = load_fixture(build(tmp_path / "TS-0001"))
+    runs = clean_runs(MIN_RUNS_TO_VERIFY, [[finding("src/shipments.ts", 8, 8)]] + [[]] * 9)
+    quoted = {f"{index}:TS-0001-d1": "false" for index in range(MIN_RUNS_TO_VERIFY)}
+
+    with pytest.raises(LocalityError) as excinfo:
+        classify(fixture, transcript(runs), labels=quoted)
+
+    message = str(excinfo.value)
+    assert "not a boolean for 10 key(s)" in message
+    for index in range(5):
+        assert f"{index}:TS-0001-d1: 'false'" in message
+    assert "5:TS-0001-d1" not in message
+    assert "(and 5 more)" in message
+
+
 def test_commentary_values_are_not_checked_for_being_booleans(tmp_path: Path) -> None:
     """The shipped label files carry lists of prose under `_`-prefixed keys."""
     fixture = load_fixture(build(tmp_path / "TS-0001"))

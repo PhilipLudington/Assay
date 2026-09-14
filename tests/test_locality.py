@@ -809,8 +809,8 @@ def test_a_correct_subset_of_labels_is_not_read_as_a_shift(tmp_path: Path) -> No
 
     Reproduced on the shipped batch's shape: nine scored runs, run 9 unparseable,
     labels for runs 8 and 9 only. Both are keyed correctly; 8 scores and 9 is the
-    unhonourable report the 2026-09-10 decision requires. The `len(labelled) > 1`
-    gate does not help — two keys are enough to trip it.
+    unhonourable report the 2026-09-10 decision requires. The distinct-index gate
+    does not help — 8 and 9 are two indices, enough to open it.
     """
     fixture = load_fixture(build(tmp_path / "TS-0001"))
     runs = clean_runs(10, [[finding("src/shipments.ts", 8, 8)]] + [[] for _ in range(9)])
@@ -863,8 +863,9 @@ def test_a_single_label_on_an_unscoreable_run_is_still_reported(tmp_path: Path) 
 
     The shift refusal above and the unhonourable report decided on 2026-09-10
     meet here: a lone label on a run that failed is indistinguishable from a lone
-    label written one too low, and the decision is to report it. Two keys are the
-    least that can show a *constant* shift, which is why the refusal needs them.
+    label written one too low, and the decision is to report it. Two indices are
+    the least that can show a *constant* shift, which is why the refusal needs
+    them — and the case below this one pins that it is indices, not keys.
     """
     fixture = load_fixture(build(tmp_path / "TS-0001"))
     runs = clean_runs(2, [[], []])
@@ -873,6 +874,52 @@ def test_a_single_label_on_an_unscoreable_run_is_still_reported(tmp_path: Path) 
     report = classify(fixture, transcript(runs), labels={"0:TS-0001-d1": True})
 
     assert report.unhonourable_labels == ["0:TS-0001-d1"]
+
+
+def test_two_labels_on_one_unscoreable_index_are_reported_not_refused(
+    tmp_path: Path,
+) -> None:
+    """The shift gate counts distinct run indices, not label keys.
+
+    A constant shift is a property of the *index* set, which is what the
+    discriminator below the gate compares — so two keys on one index carry no
+    more evidence of a shift than one key does. The gate used to count keys, and
+    a multi-defect answer key trips it with a single judgement: labelling both
+    defects on the one run the batch could not score raised `keyed one high`,
+    where the byte-identical judgement over a one-defect key is reported as
+    unhonourable. The same judgement, decided by how many defects the fixture
+    declares. Every fixture has one defect today; Phase 5 authors twelve more.
+    """
+    fixture = load_fixture(build(tmp_path / "TS-0001", text=manifest_two_defects()))
+    runs = clean_runs(2, [[], []])
+    runs[1]["parse_error"] = "no structured output on the response"
+
+    report = classify(
+        fixture,
+        transcript(runs),
+        labels={"1:TS-0001-d1": True, "1:TS-0001-d2": False},
+    )
+
+    assert report.unhonourable_labels == ["1:TS-0001-d1", "1:TS-0001-d2"]
+    assert report.verdicts[0].hand_labelled == 0
+    assert report.verdicts[1].hand_labelled == 0
+
+    # Two indices are still enough: the same file with both defects labelled on
+    # runs 1 and 2 over scored [0, 1] is the whole-file shift and stays refused.
+    runs = clean_runs(3, [[], [], []])
+    runs[2]["parse_error"] = "no structured output on the response"
+
+    with pytest.raises(LocalityError, match="keyed one high"):
+        classify(
+            fixture,
+            transcript(runs),
+            labels={
+                "1:TS-0001-d1": True,
+                "1:TS-0001-d2": False,
+                "2:TS-0001-d1": True,
+                "2:TS-0001-d2": False,
+            },
+        )
 
 
 def test_a_label_on_a_failed_run_is_unhonourable_not_nonsense(tmp_path: Path) -> None:

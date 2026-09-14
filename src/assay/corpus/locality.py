@@ -756,9 +756,10 @@ def assert_labels_match(
     set *exactly* — a proper subset is not evidence of a shift, because a correct
     file labelling the top of the range plus the unscoreable run above it also
     shifts wholly into the accepted set, and refusing that would override
-    outcome 2. Two keys are the least that can show a *constant* shift; a
-    lone key cannot be told apart from a judgement about a run that could not be
-    scored, and that one is reported.
+    outcome 2. Two *indices* are the least that can show a *constant* shift —
+    keys are not the unit, since a multi-defect answer key puts several on one
+    run — and a lone index cannot be told apart from a judgement about a run
+    that could not be scored, so that one is reported.
 
     **That rescue is partial, and where it fails is the honest part.** It holds
     while the shifted keys fall short of the scored set — some scored index left
@@ -786,7 +787,12 @@ def assert_labels_match(
     if not candidates:
         return []
 
-    if len(labelled) > 1:
+    # Distinct *indices*, not keys: the discriminator below compares index sets,
+    # and two keys on one index — both defects of a multi-defect answer key
+    # labelled on the same run — carry no more evidence of a constant shift
+    # than one key does. Counting keys refused exactly that file.
+    named = {_key_index(key) for key in labelled} - {None}
+    if len(named) > 1:
         for offset in (1, -1):
             shifted = [_shift_key(key, offset) for key in labelled]
             if any(key is None or key not in expected for key in shifted):

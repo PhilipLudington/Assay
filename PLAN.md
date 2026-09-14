@@ -321,7 +321,7 @@ Found issues, worked between PRs and ahead of phase work. Each is one branch off
       no longer also the outcome of a key *copied* right. 333 tests green, the
       shipped result re-scores unchanged, and the mutation that numbers a
       scored record by its position among all runs is caught by the new test.)
-- [ ] **The off-by-one shift gate counts label *keys*, not distinct run
+- [x] **The off-by-one shift gate counts label *keys*, not distinct run
       indices, so a multi-defect answer key refuses a legitimate label file.**
       `locality.py:757` gates the whole-file shift check on `len(labelled) > 1`,
       while the discriminator it guards (`:769`) compares *index sets*. Two keys
@@ -348,6 +348,16 @@ Found issues, worked between PRs and ahead of phase work. Each is one branch off
       `len({_key_index(key) for key in labelled}) > 1`, plus a test pinning the
       two-keys-one-index shape as reported rather than refused.
       (qa-review 2026-09-11)
+      (completed 2026-09-13 — the prescribed gate, with `None` subtracted from
+      the set so a key whose head is not an index does not count as a second
+      index: it could never shift into `expected`, so letting it open the gate
+      would only run a loop that bails on it. Test written first and red on the
+      unfixed tree with the exact `keyed one high` refusal this line quotes;
+      the same test pins that two *indices* still refuse the whole-file shift,
+      so the fix narrows the gate to what the discriminator compares and does
+      not weaken it. The docstring sentence that said "two keys are the least
+      that can show a constant shift" now says indices. 336 tests green, the
+      shipped result re-scores unchanged, no other source touched.)
 - [ ] **Reject a label *value* that is not a boolean, the way the key now is.**
       `locality.py:1120` coerces with `bool(v)` and `classify` again at `:803`,
       so `{"0:TS-0001-d1": "false"}` — a hand-editor quoting a JSON boolean —

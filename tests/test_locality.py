@@ -1510,11 +1510,11 @@ def test_a_run_record_that_is_not_an_object_is_refused(
     `partition_runs` calls `.get(...)` on every element of `runs`, so a
     transcript holding `["not a record"]`, `[None]` or `[42]` escaped as
     `AttributeError` rather than `LocalityError` — the third site of the shape
-    the `--labels` list and the `f"{None:>2}"` crash were. Checked once at
-    `classify`'s entry, where the transcript first becomes this module's
-    problem, rather than guarded in each of the three readers that reach a raw
-    record: three guards is the "rule enforced in one of N entry points" shape
-    this module keeps closing.
+    the `--labels` list and the `f"{None:>2}"` crash were. Checked once, in
+    `partition_runs`, which both scorers call before any reader reaches a raw
+    record: a guard in each reader, or at each scorer's entry, is the "rule
+    enforced in one of N entry points" shape this module keeps closing. The
+    sibling in `tests/test_precision.py` pins the other scorer.
 
     The bad record sits at position 1 behind a clean one so the refusal has to
     name where it is, not just that it is — and the type it found, which is the

@@ -31,6 +31,7 @@ from assay.corpus.locality import (
     classify,
     extract_findings,
     ground_truth,
+    main,
     normalise_path,
     print_report,
     review_floor,
@@ -1168,6 +1169,79 @@ def test_commentary_keys_are_not_labels_and_are_not_refused(tmp_path: Path) -> N
 
     assert report.verdicts[0].hand_labelled == 1
     assert report.verdicts[0].status is Verdict.SURVIVED
+
+
+# --- label values ------------------------------------------------------------
+
+
+def test_a_quoted_false_is_refused_through_the_cli_not_read_as_true(tmp_path: Path) -> None:
+    """The value-side twin of the key checks above, and the worse of the two.
+
+    `main` used to coerce every value with `bool(v)`, so a hand-editor quoting a
+    JSON boolean — `"false"` — was read as `True`. Measured on the shipped
+    labels: quoting all ten flipped `SURVIVED cross_file 0/10` to `REFUTED
+    10/10` while `hand_labelled` still read 10, so the report looked fully
+    hand-judged and was inverted. A dropped key at least leaves `hand_labelled`
+    short; a coerced value leaves every counter looking right.
+
+    Driven through `main` because that is where the coercion lived: a check in
+    the helper alone would see `True` arrive and have nothing to refuse.
+    """
+    fixture_root = build(tmp_path / "TS-0001")
+    runs = clean_runs(MIN_RUNS_TO_VERIFY, [[finding("src/shipments.ts", 8, 8)]] + [[]] * 9)
+    stored = tmp_path / "t.json"
+    stored.write_text(json.dumps(transcript(runs)), encoding="utf-8")
+    labels = tmp_path / "labels.json"
+    labels.write_text(json.dumps({"0:TS-0001-d1": "false"}), encoding="utf-8")
+
+    with pytest.raises(LocalityError, match="not a boolean"):
+        main([str(fixture_root), "--from", str(stored), "--labels", str(labels)])
+
+
+@pytest.mark.parametrize("value", ["false", "true", 0, 1, None, [True]])
+def test_a_label_value_that_is_not_a_boolean_is_refused(tmp_path: Path, value: Any) -> None:
+    """Reject, never coerce — the rule `run_index` already follows.
+
+    `0` and `1` are refused too: `bool(0)` would be right by accident, and a
+    file that mixes integers and booleans is a file whose author was not
+    writing booleans. The check lives in the helper so a direct `classify`
+    caller — the shipped-results test is one — is held to the same rule as the
+    CLI.
+    """
+    fixture = load_fixture(build(tmp_path / "TS-0001"))
+    runs = clean_runs(MIN_RUNS_TO_VERIFY, [[finding("src/shipments.ts", 8, 8)]] + [[]] * 9)
+
+    with pytest.raises(LocalityError, match="not a boolean"):
+        classify(fixture, transcript(runs), labels={"0:TS-0001-d1": value})
+
+
+def test_commentary_values_are_not_checked_for_being_booleans(tmp_path: Path) -> None:
+    """The shipped label files carry lists of prose under `_`-prefixed keys."""
+    fixture = load_fixture(build(tmp_path / "TS-0001"))
+    runs = clean_runs(MIN_RUNS_TO_VERIFY, [[finding("src/shipments.ts", 8, 8)]] + [[]] * 9)
+
+    report = classify(
+        fixture,
+        transcript(runs),
+        labels={"_README": ["why run 0 counts"], "0:TS-0001-d1": False},
+    )
+
+    assert report.verdicts[0].hand_labelled == 1
+
+
+def test_a_label_file_that_is_not_a_json_object_is_refused(tmp_path: Path) -> None:
+    """A list or a bare string must fail the module's own way, not with
+    `AttributeError` from `.items()`. `assay.eval.precision.load_labels` has
+    guarded this since it was written; locality had no equivalent."""
+    fixture_root = build(tmp_path / "TS-0001")
+    runs = clean_runs(MIN_RUNS_TO_VERIFY, [[finding("src/shipments.ts", 8, 8)]] + [[]] * 9)
+    stored = tmp_path / "t.json"
+    stored.write_text(json.dumps(transcript(runs)), encoding="utf-8")
+    labels = tmp_path / "labels.json"
+    labels.write_text(json.dumps(["0:TS-0001-d1"]), encoding="utf-8")
+
+    with pytest.raises(LocalityError, match="must be a JSON object"):
+        main([str(fixture_root), "--from", str(stored), "--labels", str(labels)])
 
 
 def test_labels_against_a_batch_that_scored_nothing_say_so(tmp_path: Path) -> None:

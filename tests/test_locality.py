@@ -1498,11 +1498,13 @@ def test_a_malformed_run_index_reaches_the_caller_as_its_own_error(tmp_path: Pat
 
 
 @pytest.mark.parametrize(
-    "record",
-    ["not a record", None, 42, ["a", "list"]],
+    ("record", "type_name"),
+    [("not a record", "str"), (None, "NoneType"), (42, "int"), (["a", "list"], "list")],
     ids=["text", "null", "int", "list"],
 )
-def test_a_run_record_that_is_not_an_object_is_refused(tmp_path: Path, record: Any) -> None:
+def test_a_run_record_that_is_not_an_object_is_refused(
+    tmp_path: Path, record: Any, type_name: str
+) -> None:
     """A record that is not a JSON object fails the module's own way.
 
     `partition_runs` calls `.get(...)` on every element of `runs`, so a
@@ -1515,12 +1517,15 @@ def test_a_run_record_that_is_not_an_object_is_refused(tmp_path: Path, record: A
     this module keeps closing.
 
     The bad record sits at position 1 behind a clean one so the refusal has to
-    name where it is, not just that it is.
+    name where it is, not just that it is — and the type it found, which is the
+    half that tells a reader what their transcript holds.
     """
     fixture = load_fixture(build(tmp_path / "TS-0001"))
     runs: list[Any] = clean_runs(1, [[]]) + [record]
 
-    with pytest.raises(LocalityError, match=r"runs\[1\] is not a JSON object"):
+    with pytest.raises(
+        LocalityError, match=rf"runs\[1\] is not a JSON object, got {type_name}"
+    ):
         classify(fixture, transcript(runs))
 
 

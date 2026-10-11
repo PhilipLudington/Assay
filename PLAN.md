@@ -1,5 +1,18 @@
 # Assay — Implementation Plan
 
+> **Written for Claude.** Precise for a later session, not easy reading. To review
+> it, ask Claude to explain it in plain words and judge the explanation.
+
+> **Retired 2026-10-11.** Philip retired Assay into `/qa-calibrate` (decision D5,
+> `~/Fun/Workflow/sdlc/2026-10-11-pipeline-catch-up-decisions.md`). Review agents are
+> measured by `~/.claude/skills/qa-calibrate/` on the fixtures that
+> `~/.claude/skills/qa-review/run-fixture.sh` runs, which the 2026-09-06 record already
+> called "Assay v0"; Warrant, Assay's only dependent, scores with `/qa-calibrate` too.
+> **No item in this plan is to be taken.** The phases below are kept as the record of
+> what was built and measured. Anything here worth porting (the `TS-0001` corpus, the
+> precision scorer and its exact intervals) goes to `~/.claude` as an inbox proposal,
+> never ported from this tree.
+
 ## Overview
 
 Build order for the v1 described in [DESIGN.md](DESIGN.md): a TypeScript

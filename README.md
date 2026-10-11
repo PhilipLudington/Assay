@@ -4,10 +4,13 @@
 seeded defects, and a Python harness that scores per-reviewer precision and
 recall with confidence intervals.
 
-> **Status: pre-implementation.** This repository currently contains design
-> documents only — no code, no corpus, no results. Phase 0 has not started.
-> Nothing here has been measured yet, and this README will not carry a results
-> table until it has. See [Status](#status).
+> **Status: retired (2026-10-11).** Assay will not be finished. Measuring the
+> review agents now happens in the `/qa-calibrate` skill of the author's Claude
+> Code setup (`~/.claude/skills/qa-calibrate/`), which runs a small set of review
+> fixtures and grew out of the same idea. Phase 0 and part of Phase 1 were built:
+> the pilot, the corpus format, one fixture (`TS-0001`) and a precision scorer.
+> They stay here as a record. No results table was ever published. See
+> [Status](#status).
 
 ## The problem
 
@@ -132,18 +135,19 @@ Deliberate omissions, not oversights. The full fence is in
 
 ## Status
 
-Design is settled; implementation is under way. Phases are defined in
-[PLAN.md](PLAN.md).
+Retired on 2026-10-11, folded into `/qa-calibrate`
+(`~/.claude/skills/qa-calibrate/`). The phases below are defined in
+[PLAN.md](PLAN.md) and none past Phase 1 will be built.
 
 | Phase | | Status |
 |---|---|---|
 | 0 | Pilot — resolve empirical unknowns | Complete (2026-07-26) |
-| 1 | Corpus format and isolation | In progress |
-| 2 | Reviewers and the run path | Not started |
-| 3 | Matching, judge, and judge validation | Not started |
-| 4 | Scoring and reporting | Not started |
-| 5 | Corpus buildout | Not started |
-| 6 | First published sweep | Not started |
+| 1 | Corpus format and isolation | Stopped at retirement |
+| 2 | Reviewers and the run path | Not built |
+| 3 | Matching, judge, and judge validation | Not built |
+| 4 | Scoring and reporting | Not built |
+| 5 | Corpus buildout | Not built |
+| 6 | First published sweep | Not built |
 
 Phase 0 is a throwaway pilot that answers three questions rather than guessing
 them: how many runs a stable score needs, how large a fixture repo must be for
